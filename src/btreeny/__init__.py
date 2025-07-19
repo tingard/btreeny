@@ -1,11 +1,18 @@
-from collections import deque
 import contextlib
-import contextvars
 from copy import deepcopy
-from enum import Enum
 import functools
 import itertools
-from typing import Any, Callable, Generator, Iterator, Literal, ParamSpec, ContextManager, TypeVar, cast
+from typing import (
+    Any,
+    Callable,
+    Generator,
+    Iterator,
+    Literal,
+    ParamSpec,
+    ContextManager,
+    TypeVar,
+    cast,
+)
 import uuid
 
 from ._tree_status import TreeStatus
@@ -17,10 +24,11 @@ from ._ctx import (
 )
 
 BlackboardType = TypeVar("BlackboardType")
+TreeTickFunction = Callable[[BlackboardType], TreeStatus]
+TreeNode = ContextManager[TreeTickFunction[BlackboardType]]
 
 P = ParamSpec("P")
 T = TypeVar("T")
-
 
 
 def get_name(obj: Any) -> str:
@@ -31,11 +39,15 @@ def get_name(obj: Any) -> str:
     return str(obj)
 
 
-def action(func: Callable[P, Iterator[Callable[[BlackboardType], TreeStatus]]]):
+def action(
+    func: Callable[P, Iterator[TreeTickFunction[BlackboardType]]],
+) -> Callable[P, TreeNode[BlackboardType]]:
     self_name = get_name(func)
 
     f = contextlib.contextmanager(func)
+
     @contextlib.contextmanager
+    @functools.wraps(f)
     def inner(*args: P.args, **kwargs: P.kwargs):
         # Each invocation of the action function gets a new ID
         self_id = uuid.uuid4()
@@ -47,14 +59,14 @@ def action(func: Callable[P, Iterator[Callable[[BlackboardType], TreeStatus]]]):
         stack = __ctx_call_stack.get()
         parent = None if len(stack) == 0 else stack[-1]
         __ctx_call_stack.set(stack + [self_id])
-        
+
         _tree_graph = deepcopy(__ctx_tree_graph.get())
         if parent not in _tree_graph:
             _tree_graph[parent] = []
         _tree_graph[parent].append(self_id)
         __ctx_tree_graph.set(_tree_graph)
-        should_gen_exit = False
         with f(*args, **kwargs) as action:
+
             @functools.wraps(action)
             def action_func(blackboard: BlackboardType):
                 result = action(blackboard)
@@ -62,77 +74,115 @@ def action(func: Callable[P, Iterator[Callable[[BlackboardType], TreeStatus]]]):
                 _tree_status[self_id] = result
                 __ctx_tree_status.set(_tree_status)
                 return result
+
             yield action_func
-            
+
         # Drain all values including and after this ID from the stack
         # Raises ValueError if ID not in stack
         stack = __ctx_call_stack.get()
         id_in_stack = stack.index(self_id)
         __ctx_call_stack.set(stack[:id_in_stack])
-        if should_gen_exit:
-            raise GeneratorExit
+
     return inner
 
-def simple_action(f: Callable[[BlackboardType], TreeStatus]):
+
+def simple_action(f: TreeTickFunction[BlackboardType]):
     @action
+    @functools.wraps(f)
     def _inner():
         yield f
+
     return _inner
 
+
 @action
-def sequential(*children: ContextManager[Callable[[BlackboardType], TreeStatus]]):
-    def gen():
+def sequential(*children: TreeNode[BlackboardType]):
+    def gen() -> Generator[TreeStatus, BlackboardType, TreeStatus]:
         blackboard = yield TreeStatus.RUNNING
         for child_context_manager in children:
             with child_context_manager as child_action:
-                while (result := child_action(blackboard)) == TreeStatus.RUNNING:
+                # TODO: Pyrefly is not happy with blackboard typing - why?
+                while (
+                    result := child_action(blackboard)  # pyrefly: ignore
+                ) == TreeStatus.RUNNING:
                     blackboard = yield TreeStatus.RUNNING
                 if result == TreeStatus.FAILURE:
                     return result
         return TreeStatus.SUCCESS
+
     stepper = gen()
     next(stepper)
+
     def inner(blackboard: BlackboardType) -> TreeStatus:
         nonlocal stepper
         try:
             return stepper.send(blackboard)
         except StopIteration as e:
-            return e.value
-    yield inner
+            return cast(TreeStatus, e.value)
+
+    try:
+        yield inner
+    finally:
+        stepper.close()
+
 
 @action
-def fallback(*children: ContextManager[Callable[[BlackboardType], TreeStatus]]):
-    def gen():
+def fallback(*children: TreeNode[BlackboardType]):
+    def gen() -> Generator[TreeStatus, BlackboardType, TreeStatus]:
         blackboard = yield TreeStatus.RUNNING
         for child_context_manager in children:
             with child_context_manager as child_action:
-                while (result := child_action(blackboard)) == TreeStatus.RUNNING:
+                # TODO: Pyrefly is not happy with blackboard typing - why?
+                while (
+                    result := child_action(blackboard)  # pyrefly: ignore
+                ) == TreeStatus.RUNNING:
                     blackboard = yield TreeStatus.RUNNING
                 if result == TreeStatus.SUCCESS:
                     return result
         return TreeStatus.FAILURE
+
     stepper = gen()
     next(stepper)
+
     def inner(blackboard: BlackboardType):
         nonlocal stepper
         try:
             return stepper.send(blackboard)
         except StopIteration as e:
             return cast(TreeStatus, e.value)
-    yield inner
-    stepper.close()
+
+    try:
+        yield inner
+    finally:
+        stepper.close()
 
 
 @action
 def repeat(
-    action_factory: Callable[[], ContextManager[Callable[[BlackboardType], TreeStatus]]],
+    action_factory: Callable[[], TreeNode[BlackboardType]],
     count: int | None = None,
+    continue_if: Literal[TreeStatus.SUCCESS, TreeStatus.FAILURE] = TreeStatus.SUCCESS,
 ):
+    """Repeat an action while it returns a specific value (success or failure).
+
+    Parameters
+    ----------
+    action_factory: () -> TreeNode[BlackboardType]
+        A function used to generate the action node to repeat. This needs to be a
+        function as we perform action setup and teardown on each repeat.
+    count: int, default=None
+        The number of repeats to try. If `None` then repeat to failure.
+    continue_if: TreeStatus.SUCCESS | TreeStatus.FAILURE
+        The return value which should trigger a repeat
+    """
     # Create children which is an inf
     if count is None:
         children = map(lambda factory: factory(), itertools.repeat(action_factory))
     else:
-        children = map(lambda factory: factory(), itertools.repeat(action_factory, count))
+        children = map(
+            lambda factory: factory(), itertools.repeat(action_factory, count)
+        )
+
     def gen() -> Generator[TreeStatus, BlackboardType, TreeStatus]:
         blackboard = yield TreeStatus.RUNNING
         result = TreeStatus.SUCCESS
@@ -140,7 +190,7 @@ def repeat(
             with child_context_manager as child_action:
                 while (result := child_action(blackboard)) == TreeStatus.RUNNING:
                     blackboard = yield TreeStatus.RUNNING
-                if result == TreeStatus.SUCCESS:
+                if result == continue_if:
                     # If this is the last child then return
                     if count is not None and i >= count - 1:
                         return result
@@ -148,39 +198,47 @@ def repeat(
                 else:
                     return result
         return result
+
     stepper = gen()
     next(stepper)
+
     def inner(blackboard: BlackboardType):
         nonlocal stepper
         try:
             return stepper.send(blackboard)
         except StopIteration as e:
             return cast(TreeStatus, e.value)
-    yield inner
-    # TODO: Cleanup currently open action
-    stepper.close()
+
+    try:
+        yield inner
+    finally:
+        stepper.close()
+
 
 @action
 def remap(
-    child: ContextManager[Callable[[BlackboardType], TreeStatus]],
+    child: TreeNode[BlackboardType],
     mapping: dict[TreeStatus, TreeStatus],
 ):
     with child as action:
+
         def inner(blackboard: BlackboardType) -> TreeStatus:
             result = action(blackboard)
             return mapping.get(result, result)
+
         yield inner
 
 
 @action
 def swap(
-    child: ContextManager[Callable[[BlackboardType], TreeStatus]],
+    child: TreeNode[BlackboardType],
     from_: TreeStatus,
     to: TreeStatus,
 ):
     if from_ == to:
         raise ValueError(f"Cannot swap {from_} with itself")
     with child as action:
+
         def inner(blackboard: BlackboardType) -> TreeStatus:
             result = action(blackboard)
             if result == from_:
@@ -188,15 +246,24 @@ def swap(
             elif result == to:
                 return from_
             return result
+
         yield inner
+
 
 @action
 def react(
     condition: Callable[[BlackboardType], bool],
-    nominal: ContextManager[Callable[[BlackboardType], TreeStatus]],
-    failure: ContextManager[Callable[[BlackboardType], TreeStatus]],
+    nominal: TreeNode[BlackboardType],
+    failure: TreeNode[BlackboardType],
 ):
-    """A react node allows highly reactive behavior, switching between multiple actions
+    """A react node allows highly reactive behavior, switching between multiple
+    actions depending on the currently evaluated state of the `condition` function.
+
+    Parameters
+    ----------
+    condition: (BlackboardType) -> bool
+        The function to call to determine if we are in the "nominal" or "failure" mode
+    nominal: Tree
     """
     # We need to carefully manage the call stack, inserting and removing children
     # as we switch between modes
@@ -212,11 +279,16 @@ def react(
     nominal_action = nominal.__enter__()
     nominal_call_stack = __ctx_call_stack.get()
     nominal_graph = __ctx_tree_graph.get()
-    # Intial mode is nominal    
+    # Intial mode is nominal
     mode: Literal["nominal", "failure"] = "nominal"
 
     def inner(blackboard: BlackboardType) -> TreeStatus:
-        nonlocal nominal_call_stack, failure_call_stack, nominal_graph, failure_graph, mode
+        nonlocal \
+            nominal_call_stack, \
+            failure_call_stack, \
+            nominal_graph, \
+            failure_graph, \
+            mode
         match (mode, condition(blackboard)):
             # Mode is nominal, condtion passes
             case ("nominal", True):
@@ -244,35 +316,19 @@ def react(
             # Mode is failure and the condition is failing
             case ("failure", False):
                 return failure_action(blackboard)
-    yield inner
-    # Cleanup - being careful to reset stack as appropriate
-    match mode:
-        case "nominal":
-            nominal.__exit__(None, None, None)
-            __ctx_call_stack.set(failure_call_stack)
-            failure.__exit__(None, None, None)
-        case "failure":
-            failure.__exit__(None, None, None)
-            __ctx_call_stack.set(nominal_call_stack)
-            nominal.__exit__(None, None, None)
+            case _:
+                raise RuntimeError("Impossible branch")
 
-def print_trace():
-    _id_map = __ctx_id_map.get()
-    _tree_graph = __ctx_tree_graph.get()
-    _tree_status = __ctx_tree_status.get()
-    root_actions = _tree_graph[None]
-    q = deque()
-    print(f'\n{" Trace ":-^50}')
-    for action_id in root_actions:
-        q.append((action_id, 0))
-    while len(q) > 0:
-        action_id, indent_count = q.popleft()
-        indent = ' ' * indent_count * 4
-        action_name = _id_map[action_id]
-        action_status = _tree_status.get(action_id, None)
-        if action_status is not None:
-            action_status = action_status.value
-        print(f"{indent}{action_id} {action_name} - {action_status}")
-        for child in _tree_graph.get(action_id, [])[::-1]:
-            q.appendleft((child, indent_count + 1))
-    print('-'*50 + '\n')
+    try:
+        yield inner
+    finally:
+        # Cleanup - being careful to reset stack as appropriate
+        match mode:
+            case "nominal":
+                nominal.__exit__(None, None, None)
+                __ctx_call_stack.set(failure_call_stack)
+                failure.__exit__(None, None, None)
+            case "failure":
+                failure.__exit__(None, None, None)
+                __ctx_call_stack.set(nominal_call_stack)
+                nominal.__exit__(None, None, None)
