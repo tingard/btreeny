@@ -73,7 +73,11 @@ def action(func: Callable[P, Iterator[Callable[[BlackboardType], TreeStatus]]]):
             raise GeneratorExit
     return inner
 
-
+def simple_action(f: Callable[[BlackboardType], TreeStatus]):
+    @action
+    def _inner():
+        yield f
+    return _inner
 
 @action
 def sequential(*children: ContextManager[Callable[[BlackboardType], TreeStatus]]):
