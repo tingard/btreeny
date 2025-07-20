@@ -63,7 +63,8 @@ def action(
         _tree_graph = deepcopy(__ctx_tree_graph.get())
         if parent not in _tree_graph:
             _tree_graph[parent] = []
-        _tree_graph[parent].append(self_id)
+        if self_id not in _tree_graph[parent]:
+            _tree_graph[parent].append(self_id)
         __ctx_tree_graph.set(_tree_graph)
         with f(*args, **kwargs) as action:
 
@@ -332,3 +333,49 @@ def react(
                 failure.__exit__(None, None, None)
                 __ctx_call_stack.set(nominal_call_stack)
                 nominal.__exit__(None, None, None)
+
+
+@action
+def failsafe(
+    check: Callable[[BlackboardType], bool],
+    nominal: TreeNode[BlackboardType],
+    failure: TreeNode[BlackboardType],
+):
+    """Run a check on each tick, as soon as the check returns ``False`` move from a "nominal"
+    mode to an "error" mode.
+    """
+
+    def gen() -> Generator[TreeStatus, BlackboardType, TreeStatus]:
+        nonlocal nominal
+        blackboard = yield TreeStatus.RUNNING
+        result = TreeStatus.SUCCESS
+        with nominal as nominal_action:
+            while check(blackboard):
+                result = nominal_action(blackboard)
+                match result:
+                    case TreeStatus.RUNNING:
+                        yield result
+                    case _:
+                        return result
+        with failure as failure_action:
+            while (
+                result := failure_action(blackboard)  # pyrefly: ignore
+            ) == TreeStatus.RUNNING:
+                blackboard = yield TreeStatus.RUNNING
+            return result
+        return TreeStatus.SUCCESS
+
+    stepper = gen()
+    next(stepper)
+
+    def inner(blackboard: BlackboardType):
+        nonlocal stepper
+        try:
+            return stepper.send(blackboard)
+        except StopIteration as e:
+            return cast(TreeStatus, e.value)
+
+    try:
+        yield inner
+    finally:
+        stepper.close()

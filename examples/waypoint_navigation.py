@@ -1,12 +1,11 @@
 from collections import deque
-import contextvars
 from dataclasses import dataclass, field
 import math
 import time
 from typing import Callable
 import btreeny
-from btreeny._tree_status import TreeStatus
-from btreeny.viz import print_trace
+from btreeny.viz import rerun_log_trace
+import rerun as rr
 
 
 @dataclass
@@ -98,6 +97,8 @@ class Blackboard:
 
 @btreeny.simple_action
 def set_next_waypoint(b: Blackboard):
+    if b.waypoint is not None:
+        return btreeny.TreeStatus.SUCCESS
     try:
         location = b.destinations.popleft()
     except IndexError:
@@ -114,6 +115,7 @@ def move_to_waypoint(b: Blackboard):
     if b.robot.waypoint is None or b.robot.waypoint != b.waypoint:
         b.robot.tell_waypoint(b.waypoint)
     if b.robot.position.distance_to(b.waypoint) < 0.01:
+        b.waypoint = None
         return btreeny.TreeStatus.SUCCESS
     return btreeny.TreeStatus.RUNNING
 
@@ -133,24 +135,28 @@ def charge_at_home(b: Blackboard):
     return btreeny.TreeStatus.SUCCESS
 
 
-def has_battery(b: Blackboard):
-    if b.is_charging:
-        return b.robot.battery > 0.9
-    return b.robot.battery > 0.1
+def has_battery(b: Blackboard, threshold=0.2):
+    return b.robot.battery > threshold
 
 
-def main():
+def main(rerun: bool = False):
     robot = Robot(speed=0.2, discharge_rate=0.05)
     # Reactive means run nominal branch if condition is True and error branch if False
     # TODO: Make this a "failsafe" which will initialize and run the failsafe action to SUCCESS
     # as soon as the condition fails. Assume that success on failsafe means we are able to
     # continue operating normally (with check)
-    root = btreeny.react(
-        has_battery,
-        btreeny.repeat(
-            lambda: btreeny.sequential(set_next_waypoint(), move_to_waypoint())
-        ),
-        btreeny.sequential(set_home(), move_to_waypoint(), charge_at_home()),
+    root = btreeny.repeat(
+        # Using a failsafe means that when we are low on battery we will enter a failsafe mode where
+        # we move to our charger. When(/if) the failsafe behvior returns, the action finishes.
+        # By wrapping this failsafe in a repeat, we will allow the robot to continue to the next
+        # waypoint
+        lambda: btreeny.failsafe(
+            has_battery,
+            btreeny.repeat(
+                lambda: btreeny.sequential(set_next_waypoint(), move_to_waypoint())
+            ),
+            btreeny.sequential(set_home(), move_to_waypoint(), charge_at_home()),
+        )
     )
 
     blackboard = Blackboard(
@@ -159,15 +165,21 @@ def main():
         current_location=LOCATIONS["home"],
         tell_waypoint=robot.tell_waypoint,
     )
+    if rerun:
+        rr.init("btreeny-robot", spawn=False)
+        rr.connect_grpc("rerun+http://172.26.96.1:9876/proxy")
     with root as tree:
         while True:
             robot.sense()
             result = tree(blackboard)
-            print()
-            print_trace()
-            print()
-            print(robot)
-            if result != TreeStatus.RUNNING:
+            if rerun:
+                rr.set_time("posix_time", timestamp=time.time())
+                rr.log(
+                    "robot/position", rr.Points2D((robot.position.x, robot.position.y))
+                )
+                rerun_log_trace()
+            print(robot.position, robot.battery, blackboard.destinations)
+            if result != btreeny.TreeStatus.RUNNING:
                 break
             time.sleep(0.1)
     print(f"Ended with result {result}")
@@ -175,5 +187,6 @@ def main():
 
 
 if __name__ == "__main__":
-    ctx = contextvars.copy_context()
-    ctx.run(main)
+    import typer
+
+    typer.run(main)
