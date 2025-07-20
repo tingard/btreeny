@@ -3,7 +3,6 @@ from copy import deepcopy
 import functools
 import itertools
 from typing import (
-    Any,
     Callable,
     Generator,
     Iterator,
@@ -15,6 +14,7 @@ from typing import (
 )
 import uuid
 
+from ._get_name import get_name
 from ._tree_status import TreeStatus
 from ._ctx import (
     call_stack as __ctx_call_stack,
@@ -31,12 +31,28 @@ P = ParamSpec("P")
 T = TypeVar("T")
 
 
-def get_name(obj: Any) -> str:
-    if (name := getattr(obj, "__name__", None)) is not None:
-        return name
-    elif (cls := getattr(obj, "__class__", None)) is not None:
-        return getattr(cls, "__name__", str(obj))
-    return str(obj)
+@contextlib.contextmanager
+def _manage_call_stack(id: uuid.UUID, name: str):
+    _id_map = deepcopy(__ctx_id_map.get())
+    _id_map[id] = name
+    __ctx_id_map.set(_id_map)
+    # When we setup this action, set it on the call stack
+    stack = __ctx_call_stack.get()
+    parent = None if len(stack) == 0 else stack[-1]
+    __ctx_call_stack.set(stack + [id])
+    # Add this to the node graph
+    _tree_graph = deepcopy(__ctx_tree_graph.get())
+    if parent not in _tree_graph:
+        _tree_graph[parent] = []
+    if id not in _tree_graph[parent]:
+        _tree_graph[parent].append(id)
+    __ctx_tree_graph.set(_tree_graph)
+    yield
+    # Drain all values including and after this ID from the stack
+    # Raises ValueError if ID not in stack
+    stack = __ctx_call_stack.get()
+    id_in_stack = stack.index(id)
+    __ctx_call_stack.set(stack[:id_in_stack])
 
 
 def action(
@@ -51,38 +67,18 @@ def action(
     def inner(*args: P.args, **kwargs: P.kwargs):
         # Each invocation of the action function gets a new ID
         self_id = uuid.uuid4()
-        # Store the ID
-        _id_map = deepcopy(__ctx_id_map.get())
-        _id_map[self_id] = self_name
-        __ctx_id_map.set(_id_map)
-        # When we setup this action, set it on the call stack
-        stack = __ctx_call_stack.get()
-        parent = None if len(stack) == 0 else stack[-1]
-        __ctx_call_stack.set(stack + [self_id])
+        with _manage_call_stack(self_id, self_name):
+            with f(*args, **kwargs) as action:
 
-        _tree_graph = deepcopy(__ctx_tree_graph.get())
-        if parent not in _tree_graph:
-            _tree_graph[parent] = []
-        if self_id not in _tree_graph[parent]:
-            _tree_graph[parent].append(self_id)
-        __ctx_tree_graph.set(_tree_graph)
-        with f(*args, **kwargs) as action:
+                @functools.wraps(action)
+                def action_func(blackboard: BlackboardType):
+                    result = action(blackboard)
+                    _tree_status = deepcopy(__ctx_tree_status.get())
+                    _tree_status[self_id] = result
+                    __ctx_tree_status.set(_tree_status)
+                    return result
 
-            @functools.wraps(action)
-            def action_func(blackboard: BlackboardType):
-                result = action(blackboard)
-                _tree_status = deepcopy(__ctx_tree_status.get())
-                _tree_status[self_id] = result
-                __ctx_tree_status.set(_tree_status)
-                return result
-
-            yield action_func
-
-        # Drain all values including and after this ID from the stack
-        # Raises ValueError if ID not in stack
-        stack = __ctx_call_stack.get()
-        id_in_stack = stack.index(self_id)
-        __ctx_call_stack.set(stack[:id_in_stack])
+                yield action_func
 
     return inner
 
@@ -94,6 +90,11 @@ def simple_action(f: TreeTickFunction[BlackboardType]):
         yield f
 
     return _inner
+
+
+# ------------------------------------------------------------------------------
+# Control flow
+# ------------------------------------------------------------------------------
 
 
 @action
@@ -161,8 +162,8 @@ def fallback(*children: TreeNode[BlackboardType]):
 @action
 def repeat(
     action_factory: Callable[[], TreeNode[BlackboardType]],
+    continue_if: Literal[TreeStatus.SUCCESS, TreeStatus.FAILURE],
     count: int | None = None,
-    continue_if: Literal[TreeStatus.SUCCESS, TreeStatus.FAILURE] = TreeStatus.SUCCESS,
 ):
     """Repeat an action while it returns a specific value (success or failure).
 
@@ -216,6 +217,10 @@ def repeat(
         stepper.close()
 
 
+retry = functools.partial(repeat, continue_if=TreeStatus.FAILURE)
+redo = functools.partial(repeat, continue_if=TreeStatus.SUCCESS)
+
+
 @action
 def remap(
     child: TreeNode[BlackboardType],
@@ -233,22 +238,25 @@ def remap(
 @action
 def swap(
     child: TreeNode[BlackboardType],
+    *,
     from_: TreeStatus,
     to: TreeStatus,
 ):
     if from_ == to:
         raise ValueError(f"Cannot swap {from_} with itself")
-    with child as action:
+    with remap(child, {from_: to, to: from_}) as action:
+        yield action
 
-        def inner(blackboard: BlackboardType) -> TreeStatus:
-            result = action(blackboard)
-            if result == from_:
-                return to
-            elif result == to:
-                return from_
-            return result
 
-        yield inner
+failure_is_success = functools.partial(
+    swap, from_=TreeStatus.FAILURE, to=TreeStatus.SUCCESS
+)
+failure_is_running = functools.partial(
+    swap, from_=TreeStatus.FAILURE, to=TreeStatus.RUNNING
+)
+success_is_running = functools.partial(
+    swap, from_=TreeStatus.SUCCESS, to=TreeStatus.RUNNING
+)
 
 
 @action

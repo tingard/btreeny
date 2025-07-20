@@ -145,14 +145,14 @@ def main(rerun: bool = False):
     # TODO: Make this a "failsafe" which will initialize and run the failsafe action to SUCCESS
     # as soon as the condition fails. Assume that success on failsafe means we are able to
     # continue operating normally (with check)
-    root = btreeny.repeat(
+    root = btreeny.redo(
         # Using a failsafe means that when we are low on battery we will enter a failsafe mode where
         # we move to our charger. When(/if) the failsafe behvior returns, the action finishes.
         # By wrapping this failsafe in a repeat, we will allow the robot to continue to the next
         # waypoint
         lambda: btreeny.failsafe(
             has_battery,
-            btreeny.repeat(
+            btreeny.redo(
                 lambda: btreeny.sequential(set_next_waypoint(), move_to_waypoint())
             ),
             btreeny.sequential(set_home(), move_to_waypoint(), charge_at_home()),
