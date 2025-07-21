@@ -44,11 +44,6 @@ with root as tick_function:
     while result == btreeny.TreeStatus.RUNNING:
         # We expect trees to modify the blackboard in-place
         result = tick_function(blackboard)
-
-# or with a utility
-from datetime import timedelta
-for result in btreeny.run(root, blackboard, interval=timedelta(seconds=1)):
-    print(result)
 ```
 
 
