@@ -18,9 +18,18 @@ def my_failing_action(blackboard: MyBlackboardType):
 
 # For more complex actions
 @btreeny.action
-def my_failing_action():
-    def _inner(blackboard: MyBlackboardType)
+def my_running_action():
+    # Setup
+    # ...
 
+    # Yield a tick function
+    def _inner(blackboard: MyBlackboardType):
+        return btreeny.TreeStatus.RUNNING
+    try:
+        yield inner
+    finally:
+        # Teardown
+        # ...
 
 # We support many standard control flow nodes - see below for options
 root = btreeny.fallback(
