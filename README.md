@@ -89,7 +89,6 @@ As the client would have been closed for us!
 
 ## Controlling flow
 
-
 ### Sequential
 Accepts multiple children to cycle through. When each child succeeds, move to the next action. If any child fails then the node fails.
 
@@ -124,8 +123,28 @@ This action allows fallback to a charging state on low battery in the `waypoint_
 
 ## Logging and Visualization
 
-You can print the current tree state (using any print statement)
+Understanding what's going on in your behavior tree is crucial for debugging and triaging issues - btreeny has an (opinionated) set of logging utilities, but lets you access the underlying data to write your own.
+
+The simplest way to log the current tree state is simply to use the 
+
+### Rich 
+
+Rich is a great library for pretty printing in the terminal, to get the current tree state as a [rich.Tree](https://rich.readthedocs.io/en/stable/tree.html) renderable, use `btree.viz.get_rich_tree()`.
+
+```python
+from rich.print import print
+tree = btree.viz.get_rich_tree()
+print(tree)
+```
 
 ### Rerun
 
-`btreeny` has first-class support for the Rerun visualization platform, if `rerun-sdk` is installed. The `waypoint_navigation` example will output the tree status to Rerun using `btreeny.viz.rerun_log_trace` if run with the `--rerun` flag.
+Rerun is a great tool for visualizing robotics applications - and we want to make it easy for you to add your `btreeny` state to each timestep.
+
+```python
+import rerun as rr
+# fetch the current tree state as a dataclass with Rerun `rr.GraphNodes` and `rr.GraphEdges`
+graph = btreeny.viz.rerun_tree_graph()
+# Log to Rerun
+rr.log("tree", graph.nodes, graph.edges)
+```

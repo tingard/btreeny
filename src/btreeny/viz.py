@@ -1,14 +1,15 @@
 from collections import deque
 from dataclasses import asdict, dataclass
-from typing import Any, Callable
+from typing import Callable
+
 try:
     from rich.pretty import pprint
     from rich.tree import Tree
-    from rich.console import Console
-    from rich import print as rprint
+
     __has_rich = True
 except ImportError:
     from pprint import pprint
+
     __has_rich = False
 import uuid
 
@@ -27,18 +28,53 @@ from ._ctx import (
 from ._tree_status import TreeStatus
 
 
+def print_trace(print_func: Callable[[str], None] = print):
+    """Print the current state of the tree using a specified function.
+
+    Parameters
+    ----------
+    print_func: (str) -> None
+        The printing function to use, defaults to the builtin `print` function.
+    """
+    _id_map = __ctx_id_map.get()
+    _tree_graph = __ctx_tree_graph.get()
+    _tree_status = __ctx_tree_status.get()
+    root_actions = _tree_graph[None]
+    q = deque()
+    print_func(f"\n{' Trace ':-^50}")
+    for action_id in root_actions:
+        q.append((action_id, 0))
+    while len(q) > 0:
+        action_id, indent_count = q.popleft()
+        indent = " " * indent_count * 4
+        action_name = _id_map[action_id]
+        action_status = _tree_status.get(action_id, None)
+        if action_status is not None:
+            action_status = action_status.value
+        print_func(f"{indent}{action_id} {action_name} - {action_status}")
+        for child in _tree_graph.get(action_id, [])[::-1]:
+            q.appendleft((child, indent_count + 1))
+    print_func("-" * 50 + "\n")
+
+
 @dataclass
 class TreeStatusGraph:
     node: str
     status: TreeStatus
     children: "list[TreeStatusGraph]"
-    
+
     def pprint(self):
         pprint(asdict(self))
-    
 
 
 def get_tree_status() -> "TreeStatusGraph":
+    """Fetch the current state of the tree as a tree datastructure.
+
+    Returns
+    -------
+    TreeStatus:
+        The root of the behavior tree.
+    """
     _id_map = __ctx_id_map.get()
     _tree_graph = __ctx_tree_graph.get()
     _tree_status = __ctx_tree_status.get()
@@ -69,33 +105,14 @@ def get_tree_status() -> "TreeStatusGraph":
     return node_map[root_action]
 
 
-def print_trace(print_func: Callable[[str], None] = print):
-    _id_map = __ctx_id_map.get()
-    _tree_graph = __ctx_tree_graph.get()
-    _tree_status = __ctx_tree_status.get()
-    root_actions = _tree_graph[None]
-    q = deque()
-    print_func(f"\n{' Trace ':-^50}")
-    for action_id in root_actions:
-        q.append((action_id, 0))
-    while len(q) > 0:
-        action_id, indent_count = q.popleft()
-        indent = " " * indent_count * 4
-        action_name = _id_map[action_id]
-        action_status = _tree_status.get(action_id, None)
-        if action_status is not None:
-            action_status = action_status.value
-        print_func(f"{indent}{action_id} {action_name} - {action_status}")
-        for child in _tree_graph.get(action_id, [])[::-1]:
-            q.appendleft((child, indent_count + 1))
-    print_func("-" * 50 + "\n")
-
-
 if __has_rerun:
 
-    def rerun_log_trace(
-        rec: rr.RecordingStream | None = None, entity_path: str = "btreeny/tree"
-    ):
+    @dataclass
+    class RerunGraph:
+        nodes: rr.GraphNodes
+        edges: rr.GraphEdges
+
+    def rerun_tree_graph() -> RerunGraph:
         _id_map = __ctx_id_map.get()
         _tree_graph = __ctx_tree_graph.get()
         _tree_status = __ctx_tree_status.get()
@@ -112,27 +129,26 @@ if __has_rerun:
                 case _:
                     raise RuntimeError(f"Not a valid status {s}")
 
-        (rec or rr).log(
-            entity_path,
-            rr.GraphNodes(
+        return RerunGraph(
+            nodes=rr.GraphNodes(
                 node_ids=list(map(str, keys)),
                 labels=[f"{_id_map[k]}\n{_tree_status[k]}" for k in keys],
                 colors=[_color_from_status(_tree_status[k]) for k in keys],
                 show_labels=True,
             ),
-            rr.GraphEdges(
+            edges=rr.GraphEdges(
                 edges=[
                     (str(parent), str(child))
                     for parent in keys
                     for child in _tree_graph.get(parent, [])
                 ],
-                # Optional: graphs are undirected by default.
                 graph_type="directed",
             ),
         )
 
 
 if __has_rich:
+
     def get_rich_tree() -> Tree:
         _id_map = __ctx_id_map.get()
         _tree_graph = __ctx_tree_graph.get()
