@@ -247,16 +247,15 @@ def swap(
     with remap(child, {from_: to, to: from_}) as action:
         yield action
 
+@action
+def remap_to_always(
+    child: TreeNode[BlackboardType],
+    *,
+    always_return: TreeStatus,
+):
+    with remap(child, {k: always_return for k in TreeStatus if k != always_return}) as action:
+        yield action
 
-failure_is_success = functools.partial(
-    swap, from_=TreeStatus.FAILURE, to=TreeStatus.SUCCESS
-)
-failure_is_running = functools.partial(
-    swap, from_=TreeStatus.FAILURE, to=TreeStatus.RUNNING
-)
-success_is_running = functools.partial(
-    swap, from_=TreeStatus.SUCCESS, to=TreeStatus.RUNNING
-)
 
 
 @action
@@ -352,7 +351,6 @@ def failsafe(
     """Run a check on each tick, as soon as the check returns ``False`` move from a "nominal"
     mode to an "error" mode.
     """
-
     def gen() -> Generator[TreeStatus, BlackboardType, TreeStatus]:
         nonlocal nominal
         blackboard = yield TreeStatus.RUNNING

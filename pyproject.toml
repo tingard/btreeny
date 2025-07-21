@@ -17,6 +17,7 @@ build-backend = "uv_build"
 dev = [
     "pyrefly>=0.24.2",
     "rerun-sdk>=0.24.0",
+    "rich>=14.0.0",
     "ruff>=0.12.4",
     "typer>=0.16.0",
 ]

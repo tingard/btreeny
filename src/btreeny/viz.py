@@ -1,6 +1,15 @@
 from collections import deque
-from dataclasses import dataclass
-from typing import Callable
+from dataclasses import asdict, dataclass
+from typing import Any, Callable
+try:
+    from rich.pretty import pprint
+    from rich.tree import Tree
+    from rich.console import Console
+    from rich import print as rprint
+    __has_rich = True
+except ImportError:
+    from pprint import pprint
+    __has_rich = False
 import uuid
 
 try:
@@ -23,9 +32,13 @@ class TreeStatusGraph:
     node: str
     status: TreeStatus
     children: "list[TreeStatusGraph]"
+    
+    def pprint(self):
+        pprint(asdict(self))
+    
 
 
-def get_tree_status() -> TreeStatusGraph:
+def get_tree_status() -> "TreeStatusGraph":
     _id_map = __ctx_id_map.get()
     _tree_graph = __ctx_tree_graph.get()
     _tree_status = __ctx_tree_status.get()
@@ -41,13 +54,17 @@ def get_tree_status() -> TreeStatusGraph:
     q.append(root_action)
     while len(q) > 0:
         action = q.popleft()
-        children = _tree_graph[action]
+        try:
+            children = _tree_graph[action]
+        except KeyError:
+            continue
         for child in children:
-            node_map[action].children.append(
-                TreeStatusGraph(
-                    node=_id_map[child], status=_tree_status[child], children=[]
-                )
+            child_name = _id_map[child]
+            child_status = _tree_status[child]
+            node_map[child] = TreeStatusGraph(
+                node=child_name, status=child_status, children=[]
             )
+            node_map[action].children.append(node_map[child])
             q.append(child)
     return node_map[root_action]
 
@@ -113,3 +130,31 @@ if __has_rerun:
                 graph_type="directed",
             ),
         )
+
+
+if __has_rich:
+    def get_rich_tree() -> Tree:
+        _id_map = __ctx_id_map.get()
+        _tree_graph = __ctx_tree_graph.get()
+        _tree_status = __ctx_tree_status.get()
+        try:
+            root_actions = _tree_graph[None]
+        except KeyError:
+            return Tree("root")
+        assert len(root_actions) == 1, "Expected one root action"
+        root = root_actions[0]
+        q = deque[tuple[uuid.UUID, Tree]]()
+        tree = Tree(f"{_id_map[root]} - {_tree_status[root].value}")
+        q.append((root, tree))
+        while len(q) > 0:
+            action_id, parent_tree = q.popleft()
+            action_name = _id_map[action_id]
+            action_status = _tree_status.get(action_id, None)
+            if action_status is not None:
+                action_status = action_status.value
+            else:
+                action_status = "Not Run"
+            child_tree = parent_tree.add(f"{action_name} - {action_status}")
+            for child in _tree_graph.get(action_id, [])[::-1]:
+                q.appendleft((child, child_tree))
+        return tree

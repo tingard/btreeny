@@ -103,11 +103,29 @@ Accepts a factory function and an optional number of retries. If the resulting a
 - Redo wraps `repeat` with `continue_if=TreeStatus.SUCCESS`
 
 ### Remap
-Map 
+Map output states to different values - e.g. convert all `SUCCESS` outputs into `FAILURE`. Note that this is not reciprocal! You could, for example, use this to convert all outputs to `RUNNING`.
 
-### Swap
+`remap` has some utilities
+- `swap`: Reciprocally map between two states (e.g. Failure <-> Success)
+- `remap_to_always`: Convert the output of the action to always be this value.
 
 ### React
+Given some condition check which runs on each tick with current blackboard, alternate between two different sub-trees.
+
+Note that this function resumes a sub-tree where it has left off, rather than trying to restart it. This can create undesirable behavior without careful planning.
 
 ### Failsafe
+Given some condition check which runs on each tick with the current blackboard, if the check ever fails move to a failure tree.
 
+Useful when combined with `redo` to allow failsafe behaviour which can recover to continue normal operations.
+
+This action allows fallback to a charging state on low battery in the `waypoint_navigation` example script.
+
+
+## Logging and Visualization
+
+You can print the current tree state (using any print statement)
+
+### Rerun
+
+`btreeny` has first-class support for the Rerun visualization platform, if `rerun-sdk` is installed. The `waypoint_navigation` example will output the tree status to Rerun using `btreeny.viz.rerun_log_trace` if run with the `--rerun` flag.

@@ -4,8 +4,11 @@ import math
 import time
 from typing import Callable
 import btreeny
-from btreeny.viz import rerun_log_trace
+import btreeny.viz
 import rerun as rr
+from rich.live import Live
+from rich.columns import Columns
+
 
 
 @dataclass
@@ -168,22 +171,28 @@ def main(rerun: bool = False):
     if rerun:
         rr.init("btreeny-robot", spawn=False)
         rr.connect_grpc("rerun+http://172.26.96.1:9876/proxy")
-    with root as tree:
-        while True:
-            robot.sense()
-            result = tree(blackboard)
-            if rerun:
-                rr.set_time("posix_time", timestamp=time.time())
-                rr.log(
-                    "robot/position", rr.Points2D((robot.position.x, robot.position.y))
-                )
-                rerun_log_trace()
-            print(robot.position, robot.battery, blackboard.destinations)
-            if result != btreeny.TreeStatus.RUNNING:
-                break
-            time.sleep(0.1)
+    
+    with Live() as live:
+        with root as tree:
+            while True:
+                robot.sense()
+                result = tree(blackboard)
+                if rerun:
+                    rr.set_time("posix_time", timestamp=time.time())
+                    rr.log(
+                        "robot/position", rr.Points2D((robot.position.x, robot.position.y))
+                    )
+                    btreeny.viz.rerun_log_trace()
+                
+                columns = Columns([btreeny.viz.get_rich_tree()], equal=True, expand=True)
+                print(robot.position, robot.battery, blackboard.destinations)
+                if result != btreeny.TreeStatus.RUNNING:
+                    break
+                live.update(btreeny.viz.get_rich_tree())
+                time.sleep(0.1)
     print(f"Ended with result {result}")
     print(blackboard)
+
 
 
 if __name__ == "__main__":
