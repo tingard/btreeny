@@ -27,6 +27,10 @@ BlackboardType = TypeVar("BlackboardType")
 TreeTickFunction = Callable[[BlackboardType], TreeStatus]
 TreeNode = ContextManager[TreeTickFunction[BlackboardType]]
 
+RUNNING = TreeStatus.RUNNING
+SUCCESS = TreeStatus.SUCCESS
+FAILURE = TreeStatus.FAILURE
+
 P = ParamSpec("P")
 T = TypeVar("T")
 
@@ -120,6 +124,7 @@ def sequential(*children: TreeNode[BlackboardType]):
         try:
             return stepper.send(blackboard)
         except StopIteration as e:
+            # TODO: Raise an exception if we try to tick the tree when it's finished
             return cast(TreeStatus, e.value)
 
     try:
@@ -151,6 +156,7 @@ def fallback(*children: TreeNode[BlackboardType]):
         try:
             return stepper.send(blackboard)
         except StopIteration as e:
+            # TODO: Raise an exception if we try to tick the tree when it's finished
             return cast(TreeStatus, e.value)
 
     try:
@@ -209,6 +215,7 @@ def repeat(
         try:
             return stepper.send(blackboard)
         except StopIteration as e:
+            # TODO: Raise an exception if we try to tick the tree when it's finished
             return cast(TreeStatus, e.value)
 
     try:
@@ -249,15 +256,17 @@ def swap(
 
 
 @action
-def remap_to_always(
+def always_return(
     child: TreeNode[BlackboardType],
     *,
     always_return: TreeStatus,
 ):
-    with remap(
-        child, {k: always_return for k in TreeStatus if k != always_return}
-    ) as action:
-        yield action
+    with child as action:
+        def inner(blackboard: BlackboardType) -> TreeStatus:
+            _ = action(blackboard)
+            return always_return
+
+        yield inner
 
 
 @action
