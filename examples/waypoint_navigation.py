@@ -170,6 +170,7 @@ def main(rerun: bool = False):
     if rerun:
         rr.init("btreeny-robot", spawn=False)
         rr.connect_grpc("rerun+http://172.26.96.1:9876/proxy")
+        rr.log("world", rr.ViewCoordinates.RIGHT_HAND_Z_UP, static=True)
 
     with Live() as live:
         with root as tree:
@@ -179,8 +180,8 @@ def main(rerun: bool = False):
                 if rerun:
                     rr.set_time("posix_time", timestamp=time.time())
                     rr.log(
-                        "robot/position",
-                        rr.Points2D((robot.position.x, robot.position.y)),
+                        "world/robot/position",
+                        rr.Points3D((robot.position.x, robot.position.y, 0)),
                     )
                     graph = btreeny.viz.rerun_tree_graph()
                     rr.log("behavior-tree", graph.nodes, graph.edges)
@@ -189,9 +190,9 @@ def main(rerun: bool = False):
                     [btreeny.viz.get_rich_tree()], equal=True, expand=True
                 )
                 print(robot.position, robot.battery, blackboard.destinations)
+                live.update(columns)
                 if result != btreeny.TreeStatus.RUNNING:
                     break
-                live.update(columns)
                 time.sleep(0.1)
     print(f"Ended with result {result}")
     print(blackboard)
