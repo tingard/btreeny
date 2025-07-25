@@ -262,6 +262,7 @@ def always_return(
     always_return: TreeStatus,
 ):
     with child as action:
+
         def inner(blackboard: BlackboardType) -> TreeStatus:
             _ = action(blackboard)
             return always_return
