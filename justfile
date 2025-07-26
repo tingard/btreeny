@@ -9,3 +9,6 @@ type:
 
 test:
   uv run python -m pytest tests
+
+bench:
+  uv run --group bench python -m richbench tests/benchmarks
