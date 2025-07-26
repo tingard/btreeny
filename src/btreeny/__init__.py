@@ -5,6 +5,7 @@ import itertools
 from typing import (
     Callable,
     Generator,
+    Iterable,
     Iterator,
     Literal,
     ParamSpec,
@@ -61,8 +62,9 @@ def _manage_call_stack(id: uuid.UUID, name: str):
 
 def action(
     func: Callable[P, Iterator[TreeTickFunction[BlackboardType]]],
+    name: str | None = None,
 ) -> Callable[P, TreeNode[BlackboardType]]:
-    self_name = get_name(func)
+    self_name = name if name is not None else get_name(func)
 
     f = contextlib.contextmanager(func)
 
@@ -94,6 +96,37 @@ def simple_action(f: TreeTickFunction[BlackboardType]):
         yield f
 
     return _inner
+
+
+@contextlib.contextmanager
+def _with_stack_reset(f: TreeNode[BlackboardType]):
+    """Reset the stack to a known state before calling the tick function of this child.
+    Enables more complex stack manipulation (e.g. as required for `parallel`)
+
+    We try to avoid needing this wrapper as it adds overhead to function calls.
+    """
+    with f as tick:
+        # Set the expected call stack at the start of running this action
+        action_stack = __ctx_call_stack.get()
+
+        @functools.wraps(tick)
+        def _inner(b: BlackboardType):
+            nonlocal action_stack
+            # Fetch the current call stack
+            current_stack = __ctx_call_stack.get()
+            # Set it to the expected value
+            __ctx_call_stack.set(action_stack)
+            # Call the tick
+            result = tick(b)
+            # Update the expected stack
+            action_stack = __ctx_call_stack.get()
+            # Reset before returning
+            __ctx_call_stack.set(current_stack)
+            return result
+
+        yield _inner
+        # Reset to the actions stack so that the action can do teardown properly
+        __ctx_call_stack.set(action_stack)
 
 
 # ------------------------------------------------------------------------------
@@ -271,90 +304,6 @@ def always_return(
 
 
 @action
-def react(
-    condition: Callable[[BlackboardType], bool],
-    nominal: TreeNode[BlackboardType],
-    failure: TreeNode[BlackboardType],
-):
-    """A react node allows highly reactive behavior, switching between multiple
-    actions depending on the currently evaluated state of the `condition` function.
-
-    Parameters
-    ----------
-    condition: (BlackboardType) -> bool
-        The function to call to determine if we are in the "nominal" or "failure" mode
-    nominal: Tree
-    """
-    # We need to carefully manage the call stack, inserting and removing children
-    # as we switch between modes
-    initial_call_stack = __ctx_call_stack.get()
-    initial_graph = __ctx_tree_graph.get()
-    # Get the failure call stack
-    failure_action = failure.__enter__()
-    failure_call_stack = __ctx_call_stack.get()
-    failure_graph = __ctx_tree_graph.get()
-    __ctx_call_stack.set(initial_call_stack)
-    __ctx_tree_graph.set(initial_graph)
-    # Get the nominal call stack
-    nominal_action = nominal.__enter__()
-    nominal_call_stack = __ctx_call_stack.get()
-    nominal_graph = __ctx_tree_graph.get()
-    # Intial mode is nominal
-    mode: Literal["nominal", "failure"] = "nominal"
-
-    def inner(blackboard: BlackboardType) -> TreeStatus:
-        nonlocal \
-            nominal_call_stack, \
-            failure_call_stack, \
-            nominal_graph, \
-            failure_graph, \
-            mode
-        match (mode, condition(blackboard)):
-            # Mode is nominal, condtion passes
-            case ("nominal", True):
-                # Run the nominal action
-                return nominal_action(blackboard)
-            # Mode is nominal, condtion failes - transition to fail
-            case ("nominal", False):
-                mode = "failure"
-                # Update the nominal call stack
-                nominal_call_stack = __ctx_call_stack.get()
-                nominal_graph = __ctx_tree_graph.get()
-                # Set the current call stack as the failure stack
-                __ctx_call_stack.set(failure_call_stack)
-                __ctx_tree_graph.set(failure_graph)
-                # Run the failure action
-                return failure_action(blackboard)
-            # Mode is failure, but the condition has started passing - transition to nominal
-            case ("failure", True):
-                mode = "nominal"
-                failure_call_stack = __ctx_call_stack.get()
-                failure_graph = __ctx_tree_graph.get()
-                __ctx_call_stack.set(nominal_call_stack)
-                __ctx_tree_graph.set(nominal_graph)
-                return nominal_action(blackboard)
-            # Mode is failure and the condition is failing
-            case ("failure", False):
-                return failure_action(blackboard)
-            case _:
-                raise RuntimeError("Impossible branch")
-
-    try:
-        yield inner
-    finally:
-        # Cleanup - being careful to reset stack as appropriate
-        match mode:
-            case "nominal":
-                nominal.__exit__(None, None, None)
-                __ctx_call_stack.set(failure_call_stack)
-                failure.__exit__(None, None, None)
-            case "failure":
-                failure.__exit__(None, None, None)
-                __ctx_call_stack.set(nominal_call_stack)
-                nominal.__exit__(None, None, None)
-
-
-@action
 def failsafe(
     check: Callable[[BlackboardType], bool],
     nominal: TreeNode[BlackboardType],
@@ -398,3 +347,56 @@ def failsafe(
         yield inner
     finally:
         stepper.close()
+
+
+def any_running_is_running_allow_max_failures_failures(
+    results: Iterable[TreeStatus], max_failures: int = 0
+) -> TreeStatus:
+    """Given an interable of `TreeStatus` results, return an overall status.
+
+    If any result is `RUNNING`, return `RUNNING`.
+
+    Else if n or more results are `FAILURE`, return `FAILURE`.
+
+    Otherwise return `SUCCESS`.
+    """
+    n_failing = 0
+    for result in results:
+        match result:
+            case TreeStatus.FAILURE:
+                n_failing += 1
+            case TreeStatus.RUNNING:
+                return TreeStatus.RUNNING
+    if n_failing > max_failures:
+        return TreeStatus.FAILURE
+    return TreeStatus.SUCCESS
+
+
+@action
+def parallel(
+    *children: TreeNode[BlackboardType],
+    result_evaluation_function: Callable[
+        [list[TreeStatus]], TreeStatus
+    ] = any_running_is_running_allow_max_failures_failures,
+):
+    """Evaluate multiple nodes in parallel.
+
+    The result type is determined by the provided `result_evaluation_function`, which defaults
+    to a FAILURE if, when all actions have finished running, one or more have returned `FAILURE`.
+    """
+
+    with contextlib.ExitStack() as stack:
+        # We need to be the "parent" of all of these functions
+        tick_functions = []
+        this_stack = __ctx_call_stack.get()
+        for child in children:
+            # Reset the call stack
+            __ctx_call_stack.set(this_stack)
+            # use the _with_stack_reset wrapper to make sure this child manages its call stack properly
+            tick_functions.append(stack.enter_context(_with_stack_reset(child)))
+
+        def _inner(blackboard: BlackboardType):
+            results = [func(blackboard) for func in tick_functions]
+            return result_evaluation_function(results)
+
+        yield _inner

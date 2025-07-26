@@ -14,7 +14,7 @@ MyBlackboardType = dict[str, str]
 @btreeny.simple_action
 def my_failing_action(blackboard: MyBlackboardType):
     # You could modify the blackboard, or take actions here
-    return btreeny.TreeStatus.FAILURE
+    return btreeny.FAILURE
 
 # For more complex actions
 @btreeny.action
@@ -24,7 +24,7 @@ def my_running_action():
 
     # Yield a tick function
     def _inner(blackboard: MyBlackboardType):
-        return btreeny.TreeStatus.RUNNING
+        return btreeny.RUNNING
     try:
         yield inner
     finally:
@@ -39,9 +39,9 @@ root = btreeny.fallback(
 
 # Running the tree can be done manually
 blackboard = {}
-result = btreeny.TreeStatus.RUNNING
+result = btreeny.RUNNING
 with root as tick_function:
-    while result == btreeny.TreeStatus.RUNNING:
+    while result == btreeny.RUNNING:
         # We expect trees to modify the blackboard in-place
         result = tick_function(blackboard)
 ```
@@ -64,12 +64,12 @@ def poll_url(url: str, retries: int=10):
         # to this function's scope
         nonlocal retry_count
         if retry_count > retries:
-            return btreeny.TreeStatus.FAILURE
+            return btreeny.FAILURE
         response = client.get(url)
         retry_count += 1
         if response.status_code == 200:
-            return btreeny.TreeStatus.SUCCESS
-        return btreeny.TreeStatus.RUNNING
+            return btreeny.SUCCESS
+        return btreeny.RUNNING
     # Use a try... finally block to ensure cleanup is run
     try:
         # yield the tick function
@@ -90,6 +90,45 @@ with httpx.Client() as client:
 
 As the client would have been closed for us!
 
+
+## Blackboards
+
+In the above example, we committed a cardinal sin of behavior trees! The `client.get(url)` call is **blocking**, meaning the tree will fail to tick to completion.
+
+A better pattern is to run the call in a background thread and return `RUNNING`. For example, if we have some blocking function `long_running_job` which we need to monitor, we can initialize a thread pool and make it available in our blackboard. Actions can then submit jobs to this thread pool and monitor for completion.
+
+```python
+import concurrent.futures
+from dataclasses import dataclass
+import time
+
+@dataclass
+class Blackboard:
+    pool: concurrent.futures.ThreadPoolExecutor
+
+def long_running_job():
+    time.sleep(3)
+    return True
+
+@btreeny.action
+def long_running_action():
+    _fut: concurrent.futures[bool] | None = None
+    def _inner(b: Blackboard):
+        if _fut is None:
+            _fut = b.pool.submit(long_running_job)
+        try:
+            result = _current_response.result(timeout=0)
+            if result:
+                return btreeny.SUCCESS
+            else:
+                return btreeny.FAILURE
+        except concurrent.futures.TimeoutError:
+            return btreeny.RUNNING
+```
+
+While we _could_ provide a utility that gives actions access to a pool by default, that wouldn't be very minimal of us would it 😛
+
+An example of this pattern can be found in the `examples/non_blocking_tree.py` script.
 
 ## Controlling flow
 
@@ -112,11 +151,6 @@ Map output states to different values - e.g. convert all `SUCCESS` outputs into 
 - `swap`: Reciprocally map between two states (e.g. Failure <-> Success)
 - `remap_to_always`: Convert the output of the action to always be this value.
 
-### React
-Given some condition check which runs on each tick with current blackboard, alternate between two different sub-trees.
-
-Note that this function resumes a sub-tree where it has left off, rather than trying to restart it. This can create undesirable behavior without careful planning.
-
 ### Failsafe
 Given some condition check which runs on each tick with the current blackboard, if the check ever fails move to a failure tree.
 
@@ -124,6 +158,11 @@ Useful when combined with `redo` to allow failsafe behaviour which can recover t
 
 This action allows fallback to a charging state on low battery in the `waypoint_navigation` example script.
 
+### Parallel
+
+Another useful control - this allows running multiple actions on each tick, without requiring them to complete. Ticks will still happen sequentially but we do not require an action to have completed in order to run the next child. This node is especially powerful when combined with the "non blocking actions" section above, as you can trigger and wait on multiple background tasks concurrently.
+
+The return value of a tick is determined by a callable `result_evaluation_function` you can provide as a keyword argument, with a fairly conservative default.
 
 ## Logging and Visualization
 

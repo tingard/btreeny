@@ -100,41 +100,41 @@ class Blackboard:
 @btreeny.simple_action
 def set_next_waypoint(b: Blackboard):
     if b.waypoint is not None:
-        return btreeny.TreeStatus.SUCCESS
+        return btreeny.SUCCESS
     try:
         location = b.destinations.popleft()
     except IndexError:
-        return btreeny.TreeStatus.FAILURE
+        return btreeny.FAILURE
     b.waypoint = LOCATIONS[location]
-    return btreeny.TreeStatus.SUCCESS
+    return btreeny.SUCCESS
 
 
 @btreeny.simple_action
 def move_to_waypoint(b: Blackboard):
     if b.waypoint is None:
-        return btreeny.TreeStatus.FAILURE
+        return btreeny.FAILURE
     # Set the waypoint on the robot
     if b.robot.waypoint is None or b.robot.waypoint != b.waypoint:
         b.robot.tell_waypoint(b.waypoint)
     if b.robot.position.distance_to(b.waypoint) < 0.01:
         b.waypoint = None
-        return btreeny.TreeStatus.SUCCESS
-    return btreeny.TreeStatus.RUNNING
+        return btreeny.SUCCESS
+    return btreeny.RUNNING
 
 
 @btreeny.simple_action
 def set_home(b: Blackboard):
     b.waypoint = LOCATIONS["home"]
-    return btreeny.TreeStatus.SUCCESS
+    return btreeny.SUCCESS
 
 
 @btreeny.simple_action
 def charge_at_home(b: Blackboard):
     if b.robot.battery < 1.0:
         b.is_charging = True
-        return btreeny.TreeStatus.RUNNING
+        return btreeny.RUNNING
     b.is_charging = False
-    return btreeny.TreeStatus.SUCCESS
+    return btreeny.SUCCESS
 
 
 def has_battery(b: Blackboard, threshold=0.2):
@@ -191,7 +191,7 @@ def main(rerun: bool = False):
                 )
                 print(robot.position, robot.battery, blackboard.destinations)
                 live.update(columns)
-                if result != btreeny.TreeStatus.RUNNING:
+                if result != btreeny.RUNNING:
                     break
                 time.sleep(0.1)
     print(f"Ended with result {result}")
