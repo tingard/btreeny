@@ -126,6 +126,9 @@ def long_running_action():
             return btreeny.RUNNING
 ```
 
+While we _could_ provide a utility that gives actions access to a pool by default, that wouldn't be very minimal of us would it 😛
+
+An example of this pattern can be found in the `examples/non_blocking_tree.py` script.
 
 ## Controlling flow
 
@@ -155,6 +158,11 @@ Useful when combined with `redo` to allow failsafe behaviour which can recover t
 
 This action allows fallback to a charging state on low battery in the `waypoint_navigation` example script.
 
+### Parallel
+
+Another useful control - this allows running multiple actions on each tick, without requiring them to complete. Ticks will still happen sequentially but we do not require an action to have completed in order to run the next child. This node is especially powerful when combined with the "non blocking actions" section above, as you can trigger and wait on multiple background tasks concurrently.
+
+The return value of a tick is determined by a callable `result_evaluation_function` you can provide as a keyword argument, with a fairly conservative default.
 
 ## Logging and Visualization
 

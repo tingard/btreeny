@@ -62,9 +62,9 @@ def _manage_call_stack(id: uuid.UUID, name: str):
 
 def action(
     func: Callable[P, Iterator[TreeTickFunction[BlackboardType]]],
-    id: uuid.UUID | None = None,
+    name: str | None = None,
 ) -> Callable[P, TreeNode[BlackboardType]]:
-    self_name = get_name(func)
+    self_name = name if name is not None else get_name(func)
 
     f = contextlib.contextmanager(func)
 
@@ -72,7 +72,7 @@ def action(
     @functools.wraps(f)
     def inner(*args: P.args, **kwargs: P.kwargs):
         # Each invocation of the action function gets a new ID
-        self_id = id or uuid.uuid4()
+        self_id = uuid.uuid4()
         with _manage_call_stack(self_id, self_name):
             with f(*args, **kwargs) as action:
 
@@ -349,8 +349,8 @@ def failsafe(
         stepper.close()
 
 
-def evaluate_n_failures_as_failing_any_running_as_running(
-    rs: Iterable[TreeStatus], n: int = 1
+def any_running_is_running_allow_max_failures_failures(
+    results: Iterable[TreeStatus], max_failures: int = 0
 ) -> TreeStatus:
     """Given an interable of `TreeStatus` results, return an overall status.
 
@@ -361,13 +361,13 @@ def evaluate_n_failures_as_failing_any_running_as_running(
     Otherwise return `SUCCESS`.
     """
     n_failing = 0
-    for r in rs:
-        match r:
+    for result in results:
+        match result:
             case TreeStatus.FAILURE:
                 n_failing += 1
             case TreeStatus.RUNNING:
                 return TreeStatus.RUNNING
-    if n_failing >= n:
+    if n_failing > max_failures:
         return TreeStatus.FAILURE
     return TreeStatus.SUCCESS
 
@@ -377,7 +377,7 @@ def parallel(
     *children: TreeNode[BlackboardType],
     result_evaluation_function: Callable[
         [list[TreeStatus]], TreeStatus
-    ] = evaluate_n_failures_as_failing_any_running_as_running,
+    ] = any_running_is_running_allow_max_failures_failures,
 ):
     """Evaluate multiple nodes in parallel.
 

@@ -20,8 +20,7 @@ def slow_task(n: float):
     return True
 
 
-@btreeny.action
-def call_endpoint(n: float):
+def spawn_task(n: float):
     _current_response: Future[bool] | None = None
 
     def _inner(blackboard: Blackboard) -> btreeny.TreeStatus:
@@ -48,12 +47,19 @@ def call_endpoint(n: float):
 def main():
     root = btreeny.redo(
         lambda: btreeny.parallel(
-            call_endpoint(1),
-            call_endpoint(3),
+            # Slightly hacky way of altering task names to reflect params
+            btreeny.action(spawn_task, name="spawn_task_1")(1),
+            btreeny.action(spawn_task, name="spawn_task_4")(4),
+            btreeny.action(spawn_task, name="spawn_task_2")(2),
+            btreeny.action(spawn_task, name="spawn_task_3")(3),
         ),
         count=2,
     )
-    blackboard = Blackboard(pool=ThreadPoolExecutor(max_workers=1))
+    # By setting the pool size to smaller than the number of parallel tasks, we
+    # see the scheduling affect completion times in the printed tree - the 3rd
+    # and 4th tasks need to wait for previous tasks to complete, despite having
+    # shorter run durations
+    blackboard = Blackboard(pool=ThreadPoolExecutor(max_workers=2))
     blackboard.logger.setLevel(logging.DEBUG)
     result = btreeny.RUNNING
     with Live() as live, root as tick:
