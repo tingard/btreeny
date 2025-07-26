@@ -19,7 +19,8 @@ import tests.standard_actions as sa
         ([sa.run_then_fail, sa.always_ok], [bt.RUNNING, bt.SUCCESS]),
         ([sa.run_then_fail, sa.always_fail], [bt.RUNNING, bt.FAILURE]),
         ([sa.run_then_fail, sa.run_then_ok], [bt.RUNNING, bt.RUNNING, bt.SUCCESS]),
-        ([sa.run_then_fail, sa.run_then_fail], [bt.RUNNING, bt.RUNNING, bt.FAILURE]),
+        ([sa.run_then_fail, sa.run_then_fail], [bt.RUNNING,
+                                                bt.RUNNING, bt.FAILURE]),
     ],
 )
 def test_expected_behavior_fallback(children, expected):
