@@ -1,7 +1,10 @@
 # Welcome to BTreeny!
 
-This package is a minimal(ish) implementation of [Behavior Trees](https://en.wikipedia.org/wiki/Behavior_tree_(artificial_intelligence,_robotics_and_control)) in Python.
+This package is a minimal(ish) implementation of [Behavior Trees](https://en.wikipedia.org/wiki/Behavior_tree_(artificial_intelligence,_robotics_and_control)) in Python. It mainly exists to explore a different way of building and running behavior trees in Python (using a more function-based approach).
 
+For production uses, we strongly recommend using a more battle-tested library such as [PyTrees](https://py-trees.readthedocs.io/en/devel/)!
+
+For general tinkering, keep reading 👀
 
 ```python
 import btreeny
