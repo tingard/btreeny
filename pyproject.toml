@@ -24,6 +24,11 @@ dev = [
     "typer>=0.16.0",
 ]
 
+bench = [
+    "py-trees>=2.3.0",
+    "richbench>=1.0.3",
+]
+
 [tool.hatch.version]
 source = "vcs"
 
