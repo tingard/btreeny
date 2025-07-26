@@ -117,6 +117,7 @@ def long_running_job():
 def long_running_action():
     _fut: concurrent.futures[bool] | None = None
     def _inner(b: Blackboard):
+        nonlocal _fut
         if _fut is None:
             _fut = b.pool.submit(long_running_job)
         try:
