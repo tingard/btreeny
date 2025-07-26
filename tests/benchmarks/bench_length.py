@@ -5,6 +5,7 @@ import py_trees
 import btreeny as bt
 import tests.standard_actions as sa
 
+
 class AlwaysRunning(py_trees.behaviour.Behaviour):
     """A skeleton behaviour that inherits from the PyTrees Behaviour class."""
 
@@ -25,6 +26,7 @@ class AlwaysRunning(py_trees.behaviour.Behaviour):
             "  %s [Foo::terminate().terminate()][%s->%s]"
             % (self.name, self.status, new_status)
         )
+
 
 class RunThenSuccess(py_trees.behaviour.Behaviour):
     """A skeleton behaviour that inherits from the PyTrees Behaviour class."""
@@ -70,7 +72,7 @@ def btreeny_run(
     n_ticks: int = 500,
 ):
     children = itertools.chain(
-        (sa.run_then_ok() for _ in range(length - 1 )),
+        (sa.run_then_ok() for _ in range(length - 1)),
         (sa.always_running(),),
     )
     action = bt.sequential(*children)
