@@ -42,22 +42,16 @@ def _manage_call_stack(id: uuid.UUID, name: str):
     _id_map[id] = name
     __ctx_id_map.set(_id_map)
     # When we setup this action, set it on the call stack
-    stack = __ctx_call_stack.get()
-    parent = None if len(stack) == 0 else stack[-1]
-    __ctx_call_stack.set(stack + [id])
+    parent = __ctx_call_stack.get()
+    # parent = None if len(stack) == 0 else stack[-1]
+    __ctx_call_stack.set(id)
     # Add this to the node graph
-    _tree_graph = deepcopy(__ctx_tree_graph.get())
-    if parent not in _tree_graph:
-        _tree_graph[parent] = []
-    if id not in _tree_graph[parent]:
-        _tree_graph[parent].append(id)
+    _tree_graph = __ctx_tree_graph.get()
+    parents_children = _tree_graph.setdefault(parent, [])
+    parents_children.append(id)
     __ctx_tree_graph.set(_tree_graph)
     yield
-    # Drain all values including and after this ID from the stack
-    # Raises ValueError if ID not in stack
-    stack = __ctx_call_stack.get()
-    id_in_stack = stack.index(id)
-    __ctx_call_stack.set(stack[:id_in_stack])
+    __ctx_call_stack.set(parent)
 
 
 def action(
@@ -79,7 +73,7 @@ def action(
                 @functools.wraps(action)
                 def action_func(blackboard: BlackboardType):
                     result = action(blackboard)
-                    _tree_status = deepcopy(__ctx_tree_status.get())
+                    _tree_status = __ctx_tree_status.get()
                     _tree_status[self_id] = result
                     __ctx_tree_status.set(_tree_status)
                     return result
