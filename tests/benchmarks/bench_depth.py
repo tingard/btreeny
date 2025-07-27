@@ -60,14 +60,16 @@ __benchmarks__ = [
     (
         functools.partial(py_trees_run, depth=1),
         functools.partial(btreeny_run, depth=1),
-        "Sequential (depth 1)",
+        "Depth 1 sequential",
     ),
     (
         functools.partial(py_trees_run, depth=10),
         functools.partial(btreeny_run, depth=10),
-        "Sequential (depth 10)",
+        "Depth 10 sequential",
     ),
-    # (run_single, functools.partial(run, depth=10), "Mid sequential (depth 10)"),
-    # (run_single, functools.partial(run, depth=100), "Deep sequential (depth 100)"),
-    # (run_single, functools.partial(run, depth=1000), "Very deep sequential (depth 1000)"),
+    (
+        functools.partial(py_trees_run, depth=100),
+        functools.partial(btreeny_run, depth=100),
+        "Depth 100 sequential",
+    ),
 ]
