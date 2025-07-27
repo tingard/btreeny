@@ -30,7 +30,9 @@ class AlwaysRunning(py_trees.behaviour.Behaviour):
 
 class RunThenOk(py_trees.behaviour.Behaviour):
     """A skeleton behaviour that inherits from the PyTrees Behaviour class."""
+
     c: bool
+
     def __init__(self, name: str) -> None:
         super().__init__(name)
 
@@ -52,7 +54,6 @@ class RunThenOk(py_trees.behaviour.Behaviour):
             "  %s [Foo::terminate().terminate()][%s->%s]"
             % (self.name, self.status, new_status)
         )
-
 
 
 def py_trees_run(
