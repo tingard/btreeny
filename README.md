@@ -2,7 +2,7 @@
 
 This package is a minimal(ish) implementation of [Behavior Trees](https://en.wikipedia.org/wiki/Behavior_tree_(artificial_intelligence,_robotics_and_control)) in Python. It mainly exists to explore a different way of building and running behavior trees in Python (using a more function-based approach).
 
-For production uses, we strongly recommend using a more battle-tested library such as [PyTrees](https://py-trees.readthedocs.io/en/devel/)! Not only is `btreeny` far more likely to cause bugs but the core implementation is quite possibly _hundreds_ of times slower than `PyTrees` (maybe thousands if you have particularily large trees!).
+For production uses, we strongly recommend using a more battle-tested library such as [PyTrees](https://py-trees.readthedocs.io/en/devel/)! Not only is `btreeny` far more likely to cause bugs but the core implementation is meaningfully slower than `PyTrees` - we really do recommend putting in the effort to use it for production use-cases.
 
 For general tinkering, keep reading 👀
 
