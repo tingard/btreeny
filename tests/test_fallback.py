@@ -27,3 +27,11 @@ def test_expected_behavior_fallback(children, expected):
         for expected_tick_result in expected:
             result = action(None)
             assert result == expected_tick_result
+
+
+def test_raises_if_ticked_when_done():
+    with bt.fallback(sa.always_ok()) as action:
+        result = action(None)
+        assert result == bt.SUCCESS
+        with pytest.raises(bt.BehaviourCompleteError):
+            _ = action(None)

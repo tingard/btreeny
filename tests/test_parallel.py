@@ -45,4 +45,9 @@ def test_expected_behavior_deep_parallel():
             assert result == expected_tick_result
 
 
-# TODO: Test other `result_evaluation_function`s
+def test_raises_if_ticked_when_done():
+    with bt.parallel(sa.always_ok()) as action:
+        result = action(None)
+        assert result == bt.SUCCESS
+        with pytest.raises(bt.BehaviourCompleteError):
+            _ = action(None)

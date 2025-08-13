@@ -11,7 +11,6 @@ from typing import (
     ParamSpec,
     ContextManager,
     TypeVar,
-    cast,
 )
 import uuid
 
@@ -34,6 +33,10 @@ FAILURE = TreeStatus.FAILURE
 
 P = ParamSpec("P")
 T = TypeVar("T")
+
+
+class BehaviourCompleteError(RuntimeError):
+    pass
 
 
 @contextlib.contextmanager
@@ -130,7 +133,7 @@ def _with_stack_reset(f: TreeNode[BlackboardType]):
 
 @action
 def sequential(*children: TreeNode[BlackboardType]):
-    def gen() -> Generator[TreeStatus, BlackboardType, TreeStatus]:
+    def gen() -> Generator[TreeStatus, BlackboardType, None]:
         blackboard = yield TreeStatus.RUNNING
         for child_context_manager in children:
             with child_context_manager as child_action:
@@ -140,8 +143,10 @@ def sequential(*children: TreeNode[BlackboardType]):
                 ) == TreeStatus.RUNNING:
                     blackboard = yield TreeStatus.RUNNING
                 if result == TreeStatus.FAILURE:
-                    return result
-        return TreeStatus.SUCCESS
+                    yield result
+                    return
+        yield TreeStatus.SUCCESS
+        return
 
     stepper = gen()
     next(stepper)
@@ -150,9 +155,9 @@ def sequential(*children: TreeNode[BlackboardType]):
         nonlocal stepper
         try:
             return stepper.send(blackboard)
-        except StopIteration as e:
-            # TODO: Raise an exception if we try to tick the tree when it's finished
-            return cast(TreeStatus, e.value)
+        except StopIteration:
+            # Raise an exception if we try to tick the tree when it's finished
+            raise BehaviourCompleteError("Ticked a finished behaviour.")
 
     try:
         yield inner
@@ -162,7 +167,7 @@ def sequential(*children: TreeNode[BlackboardType]):
 
 @action
 def fallback(*children: TreeNode[BlackboardType]):
-    def gen() -> Generator[TreeStatus, BlackboardType, TreeStatus]:
+    def gen() -> Generator[TreeStatus, BlackboardType, None]:
         blackboard = yield TreeStatus.RUNNING
         for child_context_manager in children:
             with child_context_manager as child_action:
@@ -172,8 +177,10 @@ def fallback(*children: TreeNode[BlackboardType]):
                 ) == TreeStatus.RUNNING:
                     blackboard = yield TreeStatus.RUNNING
                 if result == TreeStatus.SUCCESS:
-                    return result
-        return TreeStatus.FAILURE
+                    yield result
+                    return
+        yield TreeStatus.FAILURE
+        return
 
     stepper = gen()
     next(stepper)
@@ -182,9 +189,9 @@ def fallback(*children: TreeNode[BlackboardType]):
         nonlocal stepper
         try:
             return stepper.send(blackboard)
-        except StopIteration as e:
-            # TODO: Raise an exception if we try to tick the tree when it's finished
-            return cast(TreeStatus, e.value)
+        except StopIteration:
+            # Raise an exception if we try to tick the tree when it's finished
+            raise BehaviourCompleteError("Ticked a finished behaviour.")
 
     try:
         yield inner
@@ -218,7 +225,7 @@ def repeat(
             lambda factory: factory(), itertools.repeat(action_factory, count)
         )
 
-    def gen() -> Generator[TreeStatus, BlackboardType, TreeStatus]:
+    def gen() -> Generator[TreeStatus, BlackboardType, None]:
         blackboard = yield TreeStatus.RUNNING
         result = TreeStatus.SUCCESS
         for i, child_context_manager in enumerate(children):
@@ -228,11 +235,14 @@ def repeat(
                 if result == continue_if:
                     # If this is the last child then return
                     if count is not None and i >= count - 1:
-                        return result
+                        yield result
+                        return
                     blackboard = yield TreeStatus.RUNNING
                 else:
-                    return result
-        return result
+                    yield result
+                    return
+        yield result
+        return
 
     stepper = gen()
     next(stepper)
@@ -241,9 +251,9 @@ def repeat(
         nonlocal stepper
         try:
             return stepper.send(blackboard)
-        except StopIteration as e:
-            # TODO: Raise an exception if we try to tick the tree when it's finished
-            return cast(TreeStatus, e.value)
+        except StopIteration:
+            # Raise an exception if we try to tick the tree when it's finished
+            raise BehaviourCompleteError("Ticked a finished behaviour.")
 
     try:
         yield inner
@@ -307,7 +317,7 @@ def failsafe(
     mode to an "error" mode.
     """
 
-    def gen() -> Generator[TreeStatus, BlackboardType, TreeStatus]:
+    def gen() -> Generator[TreeStatus, BlackboardType, None]:
         nonlocal nominal
         blackboard = yield TreeStatus.RUNNING
         result = TreeStatus.SUCCESS
@@ -318,14 +328,17 @@ def failsafe(
                     case TreeStatus.RUNNING:
                         yield result
                     case _:
-                        return result
+                        yield result
+                        return
         with failure as failure_action:
             while (
                 result := failure_action(blackboard)  # pyrefly: ignore
             ) == TreeStatus.RUNNING:
                 blackboard = yield TreeStatus.RUNNING
-            return result
-        return TreeStatus.SUCCESS
+            yield result
+            return
+        yield TreeStatus.SUCCESS
+        return
 
     stepper = gen()
     next(stepper)
@@ -334,8 +347,8 @@ def failsafe(
         nonlocal stepper
         try:
             return stepper.send(blackboard)
-        except StopIteration as e:
-            return cast(TreeStatus, e.value)
+        except StopIteration:
+            raise BehaviourCompleteError("Ticked a finished behaviour.")
 
     try:
         yield inner
@@ -388,9 +401,15 @@ def parallel(
             __ctx_call_stack.set(this_stack)
             # use the _with_stack_reset wrapper to make sure this child manages its call stack properly
             tick_functions.append(stack.enter_context(_with_stack_reset(child)))
+        is_done = False
 
         def _inner(blackboard: BlackboardType):
+            nonlocal is_done
+            if is_done:
+                raise BehaviourCompleteError("Ticked a finished behaviour.")
             results = [func(blackboard) for func in tick_functions]
-            return result_evaluation_function(results)
+            result = result_evaluation_function(results)
+            is_done = result != RUNNING
+            return result
 
         yield _inner
