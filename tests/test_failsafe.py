@@ -59,3 +59,11 @@ def test_failsafe(check, nominal, failure, expected):
             result = action(b)
             assert result == expected_tick_result
             b.count += 1
+
+
+def test_raises_if_ticked_when_done():
+    with bt.failsafe(check_always_true, sa.always_ok(), sa.always_ok()) as action:
+        result = action(None)
+        assert result == bt.SUCCESS
+        with pytest.raises(bt.BehaviourCompleteError):
+            _ = action(None)

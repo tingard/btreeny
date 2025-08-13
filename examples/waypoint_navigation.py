@@ -20,6 +20,11 @@ class Position:
 
 
 @dataclass
+class NamedPosition(Position):
+    name: str
+
+
+@dataclass
 class Direction:
     x: float
     y: float
@@ -36,11 +41,11 @@ class Direction:
 
 
 LOCATIONS = {
-    "home": Position(0, 0),
-    "north": Position(1, 0),
-    "east": Position(0, 1),
-    "west": Position(0, -1),
-    "south": Position(-1, 0),
+    "home": NamedPosition(0, 0, name="home"),
+    "north": NamedPosition(1, 0, name="north"),
+    "east": NamedPosition(0, 1, name="east"),
+    "west": NamedPosition(0, -1, name="west"),
+    "south": NamedPosition(-1, 0, name="south"),
 }
 
 
@@ -93,8 +98,7 @@ class Blackboard:
     current_location: Position
     tell_waypoint: Callable[[Position], None]
     is_charging: bool = False
-
-    waypoint: Position | None = None
+    waypoint: NamedPosition | None = None
 
 
 @btreeny.simple_action
@@ -112,7 +116,7 @@ def set_next_waypoint(b: Blackboard):
 @btreeny.simple_action
 def move_to_waypoint(b: Blackboard):
     if b.waypoint is None:
-        return btreeny.FAILURE
+        return btreeny.SUCCESS
     # Set the waypoint on the robot
     if b.robot.waypoint is None or b.robot.waypoint != b.waypoint:
         b.robot.tell_waypoint(b.waypoint)
@@ -141,12 +145,18 @@ def has_battery(b: Blackboard, threshold=0.2):
     return b.robot.battery > threshold
 
 
-def main(rerun: bool = False):
+@btreeny.simple_action
+def push_current_waypoint_to_stack(b: Blackboard):
+    if b.waypoint is None:
+        return btreeny.SUCCESS
+    b.destinations.appendleft(b.waypoint.name)
+    b.waypoint = None
+    return btreeny.SUCCESS
+
+
+def main(rerun: bool = False, rerun_url: str = "rerun+http://172.26.96.1:9876/proxy"):
     robot = Robot(speed=0.2, discharge_rate=0.05)
-    # Reactive means run nominal branch if condition is True and error branch if False
-    # TODO: Make this a "failsafe" which will initialize and run the failsafe action to SUCCESS
-    # as soon as the condition fails. Assume that success on failsafe means we are able to
-    # continue operating normally (with check)
+
     root = btreeny.redo(
         # Using a failsafe means that when we are low on battery we will enter a failsafe mode where
         # we move to our charger. When(/if) the failsafe behvior returns, the action finishes.
@@ -154,10 +164,18 @@ def main(rerun: bool = False):
         # waypoint
         lambda: btreeny.failsafe(
             has_battery,
-            btreeny.redo(
-                lambda: btreeny.sequential(set_next_waypoint(), move_to_waypoint())
+            btreeny.fallback(
+                btreeny.redo(
+                    lambda: btreeny.sequential(move_to_waypoint(), set_next_waypoint())
+                ),
             ),
-            btreeny.sequential(set_home(), move_to_waypoint(), charge_at_home()),
+            btreeny.sequential(
+                # Be sure to save the current waypoint to allow resuming of the interrupted task
+                push_current_waypoint_to_stack(),
+                set_home(),
+                move_to_waypoint(),
+                charge_at_home(),
+            ),
         )
     )
 
@@ -168,9 +186,17 @@ def main(rerun: bool = False):
         tell_waypoint=robot.tell_waypoint,
     )
     if rerun:
-        rr.init("btreeny-robot", spawn=False)
-        rr.connect_grpc("rerun+http://172.26.96.1:9876/proxy")
+        rr.init("btreeny-waypoint-navigation", spawn=False)
+        rr.connect_grpc(rerun_url)
         rr.log("world", rr.ViewCoordinates.RIGHT_HAND_Z_UP, static=True)
+        rr.log(
+            "world/xyz",
+            rr.Arrows3D(
+                vectors=[[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+                colors=[[255, 0, 0], [0, 255, 0], [0, 0, 255]],
+            ),
+            static=True,
+        )
 
     with Live() as live:
         with root as tree:
@@ -180,8 +206,10 @@ def main(rerun: bool = False):
                 if rerun:
                     rr.set_time("posix_time", timestamp=time.time())
                     rr.log(
-                        "world/robot/position",
-                        rr.Points3D((robot.position.x, robot.position.y, 0)),
+                        "world/robot",
+                        rr.Points3D(
+                            [(robot.position.x, robot.position.y, 0)], radii=[0.2]
+                        ),
                     )
                     graph = btreeny.viz.rerun_tree_graph()
                     rr.log("behavior-tree", graph.nodes, graph.edges)
