@@ -7,13 +7,14 @@ For production uses, we strongly recommend using a more battle-tested library su
 For general tinkering, keep reading 👀
 
 ```python
+from typing import TypeAlias
 import btreeny
 
 # Generic over blackboards - use dataclasses to get nice type hints!
-MyBlackboardType = dict[str, str]
+MyBlackboardType: TypeAlias = dict[str, str]
 
 # For the most simple case - define your actions as a function which takes a blackbaord
-# and returns a tree
+# and returns a tree status
 @btreeny.simple_action
 def my_failing_action(blackboard: MyBlackboardType):
     # You could modify the blackboard, or take actions here
@@ -172,11 +173,11 @@ The return value of a tick is determined by a callable `result_evaluation_functi
 
 Understanding what's going on in your behavior tree is crucial for debugging and triaging issues - btreeny has an (opinionated) set of logging utilities, but lets you access the underlying data to write your own.
 
-The simplest way to log the current tree state is simply to use the 
+The simplest way to log the current tree state is simply to use the `btreeny.viz.get_tree_status` helper function, which will return a `TreeStatusGraph` you can print, iterate through, or pretty-print with `graph.pprint()`.
 
 ### Rich 
 
-Rich is a great library for pretty printing in the terminal, to get the current tree state as a [rich.Tree](https://rich.readthedocs.io/en/stable/tree.html) renderable, use `btree.viz.get_rich_tree()`.
+Rich is a great library for pretty printing in the terminal, if rich is installed you can fetch the current tree state as a [rich.Tree](https://rich.readthedocs.io/en/stable/tree.html) renderable, use `btree.viz.get_rich_tree()`.
 
 ```python
 from rich.print import print
@@ -186,7 +187,7 @@ print(tree)
 
 ### Rerun
 
-Rerun is a great tool for visualizing robotics applications - and we want to make it easy for you to add your `btreeny` state to each timestep.
+Rerun is a great tool for visualizing robotics applications - and we want to make it easy for you to add your `btreeny` state to each timestep. If rerun is installed, you can run the below to log the current tree status to the active recording:
 
 ```python
 import rerun as rr
