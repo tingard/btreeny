@@ -141,7 +141,7 @@ An example of this pattern can be found in the `examples/non_blocking_tree.py` s
 Accepts multiple children to cycle through. When each child succeeds, move to the next action. If any child fails then the node fails.
 
 ### Fallback
-Accepts multiple children to cycle through. If a child fails, move to the next action. If any child suceeds then the node fails.
+Accepts multiple children to cycle through. If a child fails, move to the next action. If any child succeeds then the node succeeds.
 
 ### Repeat / Retry / Redo
 Accepts a factory function and an optional number of retries. If the resulting action matches the specified `continue_if` value, recreate the action using the factory function and carry on.
