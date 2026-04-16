@@ -126,6 +126,8 @@ if __has_rerun:
                     return 0x991111FF
                 case TreeStatus.RUNNING:
                     return 0xBB6633FF
+                case TreeStatus.CANCELLED:
+                    return 0x333333FF
                 case _:
                     raise RuntimeError(f"Not a valid status {s}")
 

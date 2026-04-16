@@ -81,6 +81,8 @@ class Robot:
     def sense(self):
         new_time = time.monotonic()
         dt = new_time - self.last_tick
+        if dt <= 0:
+            return
         if self.waypoint is not None:
             self.position = move_with_speed(
                 self.position, self.waypoint, self.speed, dt
