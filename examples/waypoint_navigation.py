@@ -6,8 +6,11 @@ from typing import Callable
 import btreeny
 import btreeny.viz
 import rerun as rr
+from rich.console import Console
 from rich.live import Live
 from rich.columns import Columns
+
+console = Console()
 
 
 @dataclass
@@ -73,10 +76,10 @@ class Robot:
     charge_rate: float = 0.2
     waypoint: Position | None = None
     speed: float = 0.1
-    last_tick: float = field(default_factory=time.time)
+    last_tick: float = field(default_factory=time.monotonic)
 
     def sense(self):
-        new_time = time.time()
+        new_time = time.monotonic()
         dt = new_time - self.last_tick
         if self.waypoint is not None:
             self.position = move_with_speed(
@@ -88,17 +91,20 @@ class Robot:
             self.battery = min(1.0, self.battery + self.charge_rate * dt)
 
     def tell_waypoint(self, waypoint: Position):
+        console.print(f":robot: Setting new waypoint to {waypoint}")
         self.waypoint = waypoint
 
 
-@dataclass
+@dataclass(kw_only=True)
 class Blackboard:
-    robot: Robot
     destinations: deque[str]
     current_location: Position
-    tell_waypoint: Callable[[Position], None]
     is_charging: bool = False
     waypoint: NamedPosition | None = None
+    tell_waypoint: Callable[[Position], None]
+    ask_position: Callable[[], Position]
+    ask_battery: Callable[[], float]
+    ask_robot_waypoint: Callable[[], Position | None]
 
 
 @btreeny.simple_action
@@ -118,9 +124,10 @@ def move_to_waypoint(b: Blackboard):
     if b.waypoint is None:
         return btreeny.SUCCESS
     # Set the waypoint on the robot
-    if b.robot.waypoint is None or b.robot.waypoint != b.waypoint:
-        b.robot.tell_waypoint(b.waypoint)
-    if b.robot.position.distance_to(b.waypoint) < 0.01:
+    robot_waypoint = b.ask_robot_waypoint()
+    if robot_waypoint is None or robot_waypoint != b.waypoint:
+        b.tell_waypoint(b.waypoint)
+    if b.ask_position().distance_to(b.waypoint) < 0.01:
         b.waypoint = None
         return btreeny.SUCCESS
     return btreeny.RUNNING
@@ -134,7 +141,7 @@ def set_home(b: Blackboard):
 
 @btreeny.simple_action
 def charge_at_home(b: Blackboard):
-    if b.robot.battery < 1.0:
+    if b.ask_battery() < 1.0:
         b.is_charging = True
         return btreeny.RUNNING
     b.is_charging = False
@@ -142,7 +149,7 @@ def charge_at_home(b: Blackboard):
 
 
 def has_battery(b: Blackboard, threshold=0.2):
-    return b.robot.battery > threshold
+    return b.ask_battery() > threshold
 
 
 @btreeny.simple_action
@@ -180,10 +187,12 @@ def main(rerun: bool = False, rerun_url: str = "rerun+http://172.26.96.1:9876/pr
     )
 
     blackboard = Blackboard(
-        robot=robot,
         destinations=deque(("north", "east", "south", "west", "home")),
         current_location=LOCATIONS["home"],
         tell_waypoint=robot.tell_waypoint,
+        ask_battery=lambda: robot.battery,
+        ask_position=lambda: robot.position,
+        ask_robot_waypoint=lambda: robot.waypoint,
     )
     if rerun:
         rr.init("btreeny-waypoint-navigation", spawn=False)
@@ -198,13 +207,13 @@ def main(rerun: bool = False, rerun_url: str = "rerun+http://172.26.96.1:9876/pr
             static=True,
         )
 
-    with Live() as live:
+    with Live(console=console) as live:
         with root as tree:
             while True:
                 robot.sense()
                 result = tree(blackboard)
                 if rerun:
-                    rr.set_time("posix_time", timestamp=time.time())
+                    rr.set_time("posix_time", timestamp=time.monotonic())
                     rr.log(
                         "world/robot",
                         rr.Points3D(
@@ -217,13 +226,12 @@ def main(rerun: bool = False, rerun_url: str = "rerun+http://172.26.96.1:9876/pr
                 columns = Columns(
                     [btreeny.viz.get_rich_tree()], equal=True, expand=True
                 )
-                print(robot.position, robot.battery, blackboard.destinations)
                 live.update(columns)
                 if result != btreeny.RUNNING:
                     break
                 time.sleep(0.1)
-    print(f"Ended with result {result}")
-    print(blackboard)
+    console.print(f"Ended with result {result}")
+    console.print(blackboard)
 
 
 if __name__ == "__main__":
