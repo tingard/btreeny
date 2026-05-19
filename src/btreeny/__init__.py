@@ -330,6 +330,12 @@ def failsafe(
                     case _:
                         yield result
                         return
+            # An interrupt has occurred - we should mark these nodes as cancelled
+            running_node = __ctx_call_stack.get()
+            if running_node is not None:
+                _tree_status = __ctx_tree_status.get()
+                _tree_status[running_node] = TreeStatus.CANCELLED
+                __ctx_tree_status.set(_tree_status)
         with failure as failure_action:
             while (
                 result := failure_action(blackboard)  # pyrefly: ignore

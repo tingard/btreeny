@@ -5,3 +5,4 @@ class TreeStatus(str, Enum):
     RUNNING = "RUNNING"
     SUCCESS = "SUCCESS"
     FAILURE = "FAILURE"
+    CANCELLED = "CANCELLED"
