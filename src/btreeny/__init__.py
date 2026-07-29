@@ -3,6 +3,7 @@ import functools
 import itertools
 from typing import (
     Callable,
+    Concatenate,
     Generator,
     Iterable,
     Iterator,
@@ -11,15 +12,13 @@ from typing import (
     ContextManager,
     TypeVar,
 )
-import uuid
-from . import viz  # noqa
+from . import viz
 from ._get_name import _get_name
 from .tree_status import TreeStatus
 from ._ctx import (
-    runner,  # noqa
+    runner,
     call_stack as __ctx_call_stack,
     tree_graph as __ctx_tree_graph,
-    id_map as __ctx_id_map,
     tree_status as __ctx_tree_status,
 )
 
@@ -40,39 +39,46 @@ class BehaviourCompleteError(RuntimeError):
 
 
 @contextlib.contextmanager
-def _manage_call_stack(id: uuid.UUID, name: str):
-    _id_map = __ctx_id_map.get() or {}
-    _id_map[id] = name
-    __ctx_id_map.set(_id_map)
+def _manage_call_stack(name: str, sibling_index: int):
     # When we setup this action, set it on the call stack
     parent = __ctx_call_stack.get()
-    # parent = None if len(stack) == 0 else stack[-1]
     # Add this to the node graph
     _tree_graph = __ctx_tree_graph.get() or {}
     parents_children = _tree_graph.setdefault(parent, [])
-    print(f"parent is None - adding {id} to set of {len(parents_children)} items")
-    parents_children.append(id)
+    if parent is None:
+        parent_name = None
+    else:
+        _, parent_name, _ = parent
+
+    if len(parents_children) < sibling_index - 1:
+        raise ValueError(f"Cannot set sibling number {sibling_index} with existing sibling count of {len(parents_children)}")
+    elif len(parents_children) < sibling_index:
+        parents_children.append(name)
+    else:
+        parents_children[sibling_index] = name
     __ctx_tree_graph.set(_tree_graph)
     # Set the current node ID as the parent of future nodes
-    __ctx_call_stack.set(id)
-    yield
+    if parent is not None:
+        action_id = (parent_name, name, sibling_index)
+    else:
+        action_id = (None, name, sibling_index)
+    __ctx_call_stack.set(action_id)
+    yield action_id
     __ctx_call_stack.set(parent)
-
 
 def action(
     func: Callable[P, Iterator[TreeTickFunction[BlackboardType]]],
     name: str | None = None,
-) -> Callable[P, TreeNode[BlackboardType]]:
+) -> Callable[Concatenate[int, P], TreeNode[BlackboardType]]:
     self_name = name if name is not None else _get_name(func)
 
     f = contextlib.contextmanager(func)
 
     @contextlib.contextmanager
     @functools.wraps(f)
-    def inner(*args: P.args, **kwargs: P.kwargs):
+    def inner(sibling_index: int, *args: P.args, **kwargs: P.kwargs):
         # Each invocation of the action function gets a new ID
-        self_id = uuid.uuid4()
-        with _manage_call_stack(self_id, self_name):
+        with _manage_call_stack(self_name, sibling_index) as self_id:
             with f(*args, **kwargs) as action:
 
                 @functools.wraps(action)
@@ -288,7 +294,7 @@ def swap(
 ):
     if from_ == to:
         raise ValueError(f"Cannot swap {from_} with itself")
-    with remap(child, {from_: to, to: from_}) as action:
+    with remap(0, child, {from_: to, to: from_}) as action:
         yield action
 
 
@@ -430,4 +436,5 @@ __all__ = (
     "simple_action",
     "swap",
     "TreeStatus",
+    "viz",
 )

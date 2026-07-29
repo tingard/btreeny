@@ -1,6 +1,5 @@
 import contextvars
 import functools
-import uuid
 from typing import Callable, ParamSpec, TypeVar
 from .tree_status import TreeStatus
 
@@ -8,14 +7,13 @@ P = ParamSpec("P")
 T = TypeVar("T")
 
 # A node identifier is (parent_name, action_name, child_index)
-# NodeIdent = tuple[str, str, int]
+NodeIdent = tuple[str | None, str, int]
 
-id_map = contextvars.ContextVar[dict[uuid.UUID, str]]("call_stack", default={})
-call_stack = contextvars.ContextVar[uuid.UUID | None]("call_stack", default=None)
-tree_graph = contextvars.ContextVar[dict[uuid.UUID | None, list[uuid.UUID]]](
+call_stack = contextvars.ContextVar[NodeIdent | None]("call_stack", default=None)
+tree_graph = contextvars.ContextVar[dict[NodeIdent | None, list[str]]](
     "tree_graph", default={}
 )
-tree_status = contextvars.ContextVar[dict[uuid.UUID, TreeStatus]](
+tree_status = contextvars.ContextVar[dict[NodeIdent, TreeStatus]](
     "tree_status", default={}
 )
 
