@@ -1,31 +1,18 @@
+import uuid
 from collections import deque
 from dataclasses import asdict, dataclass
 from typing import Callable
 
-try:
-    from rich.pretty import pprint
-    from rich.tree import Tree
-
-    __has_rich = True
-except ImportError:
-    from pprint import pprint
-
-    __has_rich = False
-import uuid
-
-try:
-    import rerun as rr
-
-    __has_rerun = True
-except ImportError:
-    __has_rerun = False
-
+from ._ctx import (
+    id_map as __ctx_id_map,
+)
 from ._ctx import (
     tree_graph as __ctx_tree_graph,
-    id_map as __ctx_id_map,
+)
+from ._ctx import (
     tree_status as __ctx_tree_status,
 )
-from ._tree_status import TreeStatus
+from .tree_status import TreeStatus
 
 
 def print_trace(print_func: Callable[[str], None] = print):
@@ -36,14 +23,12 @@ def print_trace(print_func: Callable[[str], None] = print):
     print_func: (str) -> None
         The printing function to use, defaults to the builtin `print` function.
     """
-    _id_map = __ctx_id_map.get()
-    _tree_graph = __ctx_tree_graph.get()
-    _tree_status = __ctx_tree_status.get()
+    _id_map = __ctx_id_map.get() or {}
+    _tree_graph = __ctx_tree_graph.get() or {}
+    _tree_status = __ctx_tree_status.get() or {}
     root_actions = _tree_graph[None]
-    q = deque()
     print_func(f"\n{' Trace ':-^50}")
-    for action_id in root_actions:
-        q.append((action_id, 0))
+    q = deque((action_id, 0) for action_id in root_actions)
     while len(q) > 0:
         action_id, indent_count = q.popleft()
         indent = " " * indent_count * 4
@@ -66,6 +51,15 @@ class TreeStatusGraph:
     def pprint(self):
         pprint(asdict(self))
 
+    def count(self):
+        c = 1
+        to_iter = deque(self.children)
+        while len(to_iter):
+            subgraph = to_iter.popleft()
+            c += 1
+            to_iter.extend(subgraph.children)
+        return c
+
 
 def get_tree_status() -> "TreeStatusGraph":
     """Fetch the current state of the tree as a tree datastructure.
@@ -75,12 +69,12 @@ def get_tree_status() -> "TreeStatusGraph":
     TreeStatus:
         The root of the behavior tree.
     """
-    _id_map = __ctx_id_map.get()
-    _tree_graph = __ctx_tree_graph.get()
-    _tree_status = __ctx_tree_status.get()
+    _id_map = __ctx_id_map.get() or {}
+    _tree_graph = __ctx_tree_graph.get() or {}
+    _tree_status = __ctx_tree_status.get() or {}
 
     root_actions = _tree_graph[None]
-    assert len(root_actions) == 1
+    assert len(root_actions) == 1, "Expected one root action"
     root_action = root_actions[0]
     node_map: dict[uuid.UUID, TreeStatusGraph] = {}
     node_map[root_action] = TreeStatusGraph(
@@ -105,7 +99,8 @@ def get_tree_status() -> "TreeStatusGraph":
     return node_map[root_action]
 
 
-if __has_rerun:
+try:
+    import rerun as rr
 
     @dataclass
     class RerunGraph:
@@ -113,9 +108,9 @@ if __has_rerun:
         edges: rr.GraphEdges
 
     def rerun_tree_graph() -> RerunGraph:
-        _id_map = __ctx_id_map.get()
-        _tree_graph = __ctx_tree_graph.get()
-        _tree_status = __ctx_tree_status.get()
+        _id_map = __ctx_id_map.get() or {}
+        _tree_graph = __ctx_tree_graph.get() or {}
+        _tree_status = __ctx_tree_status.get() or {}
         keys = list(_tree_status.keys())
 
         def _color_from_status(s: TreeStatus) -> int:
@@ -145,14 +140,18 @@ if __has_rerun:
                 graph_type="directed",
             ),
         )
+except ImportError:
+    pass
 
 
-if __has_rich:
+try:
+    from rich.pretty import pprint
+    from rich.tree import Tree
 
     def get_rich_tree() -> Tree:
-        _id_map = __ctx_id_map.get()
-        _tree_graph = __ctx_tree_graph.get()
-        _tree_status = __ctx_tree_status.get()
+        _id_map = __ctx_id_map.get() or {}
+        _tree_graph = __ctx_tree_graph.get() or {}
+        _tree_status = __ctx_tree_status.get() or {}
         try:
             root_actions = _tree_graph[None]
         except KeyError:
@@ -174,3 +173,5 @@ if __has_rich:
             for child in _tree_graph.get(action_id, [])[::-1]:
                 q.appendleft((child, child_tree))
         return tree
+except ImportError:
+    pass

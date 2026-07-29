@@ -1,7 +1,7 @@
 from typing import Any
 
 
-def get_name(obj: Any) -> str:
+def _get_name(obj: Any) -> str:
     """Attempt to fetch a human readable name for an object"""
     if (name := getattr(obj, "__name__", None)) is not None:
         return name

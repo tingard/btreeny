@@ -19,6 +19,7 @@ import tests.standard_actions as sa
         (sa.run_then_ok, bt.FAILURE, [bt.RUNNING, bt.SUCCESS]),
     ],
 )
+@bt.runner
 def test_repeat(child, continue_if, expected):
     with bt.repeat(child, continue_if) as action:
         for expected_tick_result in expected:

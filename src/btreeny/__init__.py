@@ -1,5 +1,4 @@
 import contextlib
-from copy import deepcopy
 import functools
 import itertools
 from typing import (
@@ -13,10 +12,11 @@ from typing import (
     TypeVar,
 )
 import uuid
-
-from ._get_name import get_name
-from ._tree_status import TreeStatus
+from . import viz  # noqa
+from ._get_name import _get_name
+from .tree_status import TreeStatus
 from ._ctx import (
+    runner,  # noqa
     call_stack as __ctx_call_stack,
     tree_graph as __ctx_tree_graph,
     id_map as __ctx_id_map,
@@ -41,18 +41,20 @@ class BehaviourCompleteError(RuntimeError):
 
 @contextlib.contextmanager
 def _manage_call_stack(id: uuid.UUID, name: str):
-    _id_map = deepcopy(__ctx_id_map.get())
+    _id_map = __ctx_id_map.get() or {}
     _id_map[id] = name
     __ctx_id_map.set(_id_map)
     # When we setup this action, set it on the call stack
     parent = __ctx_call_stack.get()
     # parent = None if len(stack) == 0 else stack[-1]
-    __ctx_call_stack.set(id)
     # Add this to the node graph
-    _tree_graph = __ctx_tree_graph.get()
+    _tree_graph = __ctx_tree_graph.get() or {}
     parents_children = _tree_graph.setdefault(parent, [])
+    print(f"parent is None - adding {id} to set of {len(parents_children)} items")
     parents_children.append(id)
     __ctx_tree_graph.set(_tree_graph)
+    # Set the current node ID as the parent of future nodes
+    __ctx_call_stack.set(id)
     yield
     __ctx_call_stack.set(parent)
 
@@ -61,7 +63,7 @@ def action(
     func: Callable[P, Iterator[TreeTickFunction[BlackboardType]]],
     name: str | None = None,
 ) -> Callable[P, TreeNode[BlackboardType]]:
-    self_name = name if name is not None else get_name(func)
+    self_name = name if name is not None else _get_name(func)
 
     f = contextlib.contextmanager(func)
 
@@ -76,7 +78,7 @@ def action(
                 @functools.wraps(action)
                 def action_func(blackboard: BlackboardType):
                     result = action(blackboard)
-                    _tree_status = __ctx_tree_status.get()
+                    _tree_status = __ctx_tree_status.get() or {}
                     _tree_status[self_id] = result
                     __ctx_tree_status.set(_tree_status)
                     return result
@@ -217,19 +219,17 @@ def repeat(
     continue_if: TreeStatus.SUCCESS | TreeStatus.FAILURE
         The return value which should trigger a repeat
     """
-    # Create children which is an inf
+    # Create children which is an infinite repetition of
     if count is None:
-        children = map(lambda factory: factory(), itertools.repeat(action_factory))
+        children = itertools.repeat(action_factory)
     else:
-        children = map(
-            lambda factory: factory(), itertools.repeat(action_factory, count)
-        )
+        children = itertools.repeat(action_factory, count)
 
     def gen() -> Generator[TreeStatus, BlackboardType, None]:
         blackboard = yield TreeStatus.RUNNING
         result = TreeStatus.SUCCESS
         for i, child_context_manager in enumerate(children):
-            with child_context_manager as child_action:
+            with child_context_manager() as child_action:
                 while (result := child_action(blackboard)) == TreeStatus.RUNNING:
                     blackboard = yield TreeStatus.RUNNING
                 if result == continue_if:
@@ -326,9 +326,9 @@ def failsafe(
                 result = nominal_action(blackboard)
                 match result:
                     case TreeStatus.RUNNING:
-                        yield result
+                        blackboard = yield result
                     case _:
-                        yield result
+                        blackboard = yield result
                         return
         with failure as failure_action:
             while (
@@ -413,3 +413,21 @@ def parallel(
             return result
 
         yield _inner
+
+
+__all__ = (
+    "action",
+    "always_return",
+    "failsafe",
+    "fallback",
+    "parallel",
+    "redo",
+    "remap",
+    "repeat",
+    "retry",
+    "runner",
+    "sequential",
+    "simple_action",
+    "swap",
+    "TreeStatus",
+)

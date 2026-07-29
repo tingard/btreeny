@@ -3,6 +3,7 @@ import btreeny.viz
 import tests.standard_actions as sa
 
 
+@bt.runner
 def test_can_get_context():
     root = bt.sequential(sa.always_ok())
 
