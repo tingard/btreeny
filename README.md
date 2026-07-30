@@ -22,7 +22,7 @@ def my_failing_action(blackboard: MyBlackboardType):
 
 # For more complex actions
 @btreeny.action
-def my_running_action():
+def my_running_action(node_id):
     # Setup
     # ...
 
@@ -59,7 +59,7 @@ For example, an action which polls a URL until it gets a 200 status code, and wi
 
 ```python
 @btreeny.action
-def poll_url(url: str, retries: int=10):
+def poll_url(node_id, url: str, retries: int=10):
     # setup a client to allow connection pooling
     client = httpx.Client()
     retry_count = 0
@@ -115,7 +115,7 @@ def long_running_job():
     return True
 
 @btreeny.action
-def long_running_action():
+def long_running_action(node_id):
     _fut: concurrent.futures[bool] | None = None
     def _inner(b: Blackboard):
         nonlocal _fut

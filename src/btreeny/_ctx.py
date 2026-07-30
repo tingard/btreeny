@@ -14,6 +14,11 @@ tree_status = contextvars.ContextVar[dict[IdType, TreeStatus] | None](
 )
 
 
+def reset():
+    for v in (id_map, tree_graph, tree_status, call_stack):
+        v.set(None)
+
+
 def clear_subtree(node_id: IdType):
     to_search = deque((node_id,))
     to_clear = set()
@@ -32,15 +37,15 @@ def clear_subtree(node_id: IdType):
 
     curr_tree_status = tree_status.get() or {}
     curr_id_map = id_map.get() or {}
-    _el = []
+
     # Clear the children of the parent node
-    curr_tree_graph.get(node_id, _el).clear()
+    curr_tree_graph.pop(node_id, None)
 
     # Remove all descendents from the graph
-    for node_id in to_clear:
-        del curr_id_map[node_id]
-        curr_tree_graph.get(node_id, _el).clear()
-        curr_tree_status.pop(node_id, None)
+    for descendant_node_id in to_clear:
+        curr_id_map.pop(descendant_node_id, None)
+        curr_tree_graph.pop(descendant_node_id, None)
+        curr_tree_status.pop(descendant_node_id, None)
     tree_graph.set(curr_tree_graph)
     tree_status.set(curr_tree_status)
     id_map.set(curr_id_map)

@@ -20,22 +20,24 @@ def slow_task(n: float):
     return True
 
 
-def spawn_task(n: float):
+def spawn_task(node_id: bytes, n: float):
     _current_response: Future[bool] | None = None
 
     def _inner(blackboard: Blackboard) -> btreeny.TreeStatus:
         nonlocal _current_response
         if _current_response is None:
-            blackboard.logger.debug("Running slow_task for: %s", n)
+            blackboard.logger.debug("[%s] Running slow_task for: %s", node_id.hex, n)
             _current_response = blackboard.pool.submit(functools.partial(slow_task, n))
             return btreeny.RUNNING
         if not _current_response.done():
             return btreeny.RUNNING
         try:
             result = _current_response.result(timeout=0)
-            blackboard.logger.debug("Received %s", result)
+            blackboard.logger.debug("[%s] Received %s", node_id.hex, result)
         except CancelledError:
-            blackboard.logger.warning("Future was cancelled", exc_info=True)
+            blackboard.logger.warning(
+                "[%s] Future was cancelled", node_id, exc_info=True
+            )
             return btreeny.FAILURE
         except TimeoutError:
             return btreeny.RUNNING
