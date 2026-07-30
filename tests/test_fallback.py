@@ -22,6 +22,7 @@ import tests.standard_actions as sa
         ([sa.run_then_fail, sa.run_then_fail], [bt.RUNNING, bt.RUNNING, bt.FAILURE]),
     ],
 )
+@bt.runner
 def test_expected_behavior_fallback(children, expected):
     with bt.fallback(*(child() for child in children)) as action:
         for expected_tick_result in expected:
@@ -29,6 +30,7 @@ def test_expected_behavior_fallback(children, expected):
             assert result == expected_tick_result
 
 
+@bt.runner
 def test_raises_if_ticked_when_done():
     with bt.fallback(sa.always_ok()) as action:
         result = action(None)

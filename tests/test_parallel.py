@@ -27,6 +27,7 @@ import tests.standard_actions as sa
         ([sa.run_then_fail, sa.run_then_fail], [bt.RUNNING, bt.FAILURE]),
     ],
 )
+@bt.runner
 def test_expected_behavior_parallel(children, expected):
     with bt.parallel(*(child() for child in children)) as action:
         for expected_tick_result in expected:
@@ -34,6 +35,7 @@ def test_expected_behavior_parallel(children, expected):
             assert result == expected_tick_result
 
 
+@bt.runner
 def test_expected_behavior_deep_parallel():
     expected = [bt.RUNNING, bt.RUNNING, bt.SUCCESS]
     with bt.parallel(
@@ -45,6 +47,7 @@ def test_expected_behavior_deep_parallel():
             assert result == expected_tick_result
 
 
+@bt.runner
 def test_raises_if_ticked_when_done():
     with bt.parallel(sa.always_ok()) as action:
         result = action(None)

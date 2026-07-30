@@ -65,6 +65,15 @@ class TreeStatusGraph:
     def pprint(self):
         pprint(asdict(self))
 
+    def count(self):
+        c = 1
+        to_iter = deque(self.children)
+        while len(to_iter):
+            subgraph = to_iter.popleft()
+            c += 1
+            to_iter.extend(subgraph.children)
+        return c
+
 
 def get_tree_status() -> "TreeStatusGraph":
     """Fetch the current state of the tree as a tree datastructure.
