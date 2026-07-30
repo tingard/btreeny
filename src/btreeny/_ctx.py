@@ -1,3 +1,4 @@
+from collections import deque
 import contextvars
 from ._tree_status import TreeStatus
 
@@ -11,3 +12,36 @@ tree_graph = contextvars.ContextVar[dict[IdType | None, list[IdType]] | None](
 tree_status = contextvars.ContextVar[dict[IdType, TreeStatus] | None](
     "tree_status", default=None
 )
+
+
+def clear_subtree(node_id: IdType):
+    to_search = deque((node_id,))
+    to_clear = set()
+    curr_tree_graph = tree_graph.get() or {}
+    # BFS down the tree from this node
+    while len(to_search) > 0:
+        p = to_search.pop()
+        c_of_p = curr_tree_graph.get(p, None)
+        if c_of_p is None:
+            continue
+        to_search.extend(c_of_p)
+        to_clear.update(c_of_p)
+        print(len(to_search))
+
+    if call_stack.get() in to_clear:
+        call_stack.set(node_id)
+
+    curr_tree_status = tree_status.get() or {}
+    curr_id_map = id_map.get() or {}
+    _el = []
+    # Clear the children of the parent node
+    curr_tree_graph.get(node_id, _el).clear()
+
+    # Remove all descendents from the graph
+    for node_id in to_clear:
+        del curr_id_map[node_id]
+        curr_tree_graph.get(node_id, _el).clear()
+        curr_tree_status.pop(node_id, None)
+    tree_graph.set(curr_tree_graph)
+    tree_status.set(curr_tree_status)
+    id_map.set(curr_id_map)
