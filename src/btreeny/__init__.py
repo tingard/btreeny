@@ -342,9 +342,9 @@ def failsafe(
                 result = nominal_action(blackboard)
                 match result:
                     case TreeStatus.RUNNING:
-                        yield result
+                        blackboard = yield result
                     case _:
-                        yield result
+                        blackboard = yield result
                         return
             # An interrupt has occurred - we should mark these nodes as cancelled
             running_node = _ctx.call_stack.get()
@@ -439,11 +439,10 @@ def parallel(
 
 
 def runner(f: Callable[P, T]) -> Callable[[], T]:
-    ctx = contextvars.copy_context()
-
     @functools.wraps(f)
     def _inner(*a, **k):
-        functools.partial(f, *a, **k)
+        ctx = contextvars.copy_context()
+        _ctx.reset()
         return ctx.run(functools.partial(f, *a, **k))
 
     return _inner
