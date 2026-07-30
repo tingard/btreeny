@@ -83,28 +83,30 @@ def get_tree_status() -> "TreeStatusGraph":
     TreeStatus:
         The root of the behavior tree.
     """
-    _id_map = __ctx_id_map.get() or {}
-    _tree_graph = __ctx_tree_graph.get() or {}
-    _tree_status = __ctx_tree_status.get() or {}
+    curr_id_map = __ctx_id_map.get() or {}
+    curr_tree_graph = __ctx_tree_graph.get() or {}
+    curr_tree_status = __ctx_tree_status.get() or {}
 
-    root_actions = _tree_graph[None]
+    root_actions = curr_tree_graph[None]
     assert len(root_actions) == 1
     root_action = root_actions[0]
     node_map: dict[IdType, TreeStatusGraph] = {}
     node_map[root_action] = TreeStatusGraph(
-        node=_id_map[root_action], status=_tree_status[root_action], children=[]
+        node=curr_id_map[root_action],
+        status=curr_tree_status[root_action],
+        children=[],
     )
     q = deque[IdType]([])
     q.append(root_action)
     while len(q) > 0:
         action = q.popleft()
         try:
-            children = _tree_graph[action]
+            children = curr_tree_graph[action]
         except KeyError:
             continue
         for child in children:
-            child_name = _id_map[child]
-            child_status = _tree_status[child]
+            child_name = curr_id_map[child]
+            child_status = curr_tree_status[child]
             node_map[child] = TreeStatusGraph(
                 node=child_name, status=child_status, children=[]
             )
