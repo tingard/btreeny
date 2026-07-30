@@ -1,9 +1,11 @@
 import contextlib
-from copy import deepcopy
+import contextvars
 import functools
+import hashlib
 import itertools
 from typing import (
     Callable,
+    Concatenate,
     Generator,
     Iterable,
     Iterator,
@@ -12,16 +14,11 @@ from typing import (
     ContextManager,
     TypeVar,
 )
-import uuid
 
 from ._get_name import get_name
 from ._tree_status import TreeStatus
-from ._ctx import (
-    call_stack as __ctx_call_stack,
-    tree_graph as __ctx_tree_graph,
-    id_map as __ctx_id_map,
-    tree_status as __ctx_tree_status,
-)
+from ._ctx import IdType
+from . import viz, _ctx
 
 BlackboardType = TypeVar("BlackboardType")
 TreeTickFunction = Callable[[BlackboardType], TreeStatus]
@@ -40,25 +37,37 @@ class BehaviourCompleteError(RuntimeError):
 
 
 @contextlib.contextmanager
-def _manage_call_stack(id: uuid.UUID, name: str):
-    _id_map = deepcopy(__ctx_id_map.get())
-    _id_map[id] = name
-    __ctx_id_map.set(_id_map)
+def _manage_call_stack(
+    node_id: IdType | None, name: str
+) -> Generator[IdType, None, None]:
     # When we setup this action, set it on the call stack
-    parent = __ctx_call_stack.get()
-    # parent = None if len(stack) == 0 else stack[-1]
-    __ctx_call_stack.set(id)
-    # Add this to the node graph
-    _tree_graph = __ctx_tree_graph.get()
+    parent = _ctx.call_stack.get()
+    _tree_graph = _ctx.tree_graph.get() or {}
     parents_children = _tree_graph.setdefault(parent, [])
-    parents_children.append(id)
-    __ctx_tree_graph.set(_tree_graph)
-    yield
-    __ctx_call_stack.set(parent)
+    if node_id is None:
+        h = hashlib.sha256()
+        if parent is None:
+            h.update(b"__root")
+        else:
+            h.update(parent)
+        # Encode the number of previous children using a 64-bit big-endigan
+        h.update(len(parents_children).to_bytes(length=8, byteorder="big"))
+        node_id = h.digest()
+
+    _id_map = _ctx.id_map.get() or {}
+    _id_map[node_id] = name
+    _ctx.id_map.set(_id_map)
+    # parent = None if len(stack) == 0 else stack[-1]
+    _ctx.call_stack.set(node_id)
+    # Add this to the node graph
+    parents_children.append(node_id)
+    _ctx.tree_graph.set(_tree_graph)
+    yield node_id
+    _ctx.call_stack.set(parent)
 
 
 def action(
-    func: Callable[P, Iterator[TreeTickFunction[BlackboardType]]],
+    func: Callable[Concatenate[IdType, P], Iterator[TreeTickFunction[BlackboardType]]],
     name: str | None = None,
 ) -> Callable[P, TreeNode[BlackboardType]]:
     self_name = name if name is not None else get_name(func)
@@ -69,16 +78,15 @@ def action(
     @functools.wraps(f)
     def inner(*args: P.args, **kwargs: P.kwargs):
         # Each invocation of the action function gets a new ID
-        self_id = uuid.uuid4()
-        with _manage_call_stack(self_id, self_name):
-            with f(*args, **kwargs) as action:
+        with _manage_call_stack(None, self_name) as managed_node_id:
+            with f(managed_node_id, *args, **kwargs) as action:
 
                 @functools.wraps(action)
                 def action_func(blackboard: BlackboardType):
                     result = action(blackboard)
-                    _tree_status = __ctx_tree_status.get()
-                    _tree_status[self_id] = result
-                    __ctx_tree_status.set(_tree_status)
+                    _tree_status = _ctx.tree_status.get() or {}
+                    _tree_status[managed_node_id] = result
+                    _ctx.tree_status.set(_tree_status)
                     return result
 
                 yield action_func
@@ -89,7 +97,7 @@ def action(
 def simple_action(f: TreeTickFunction[BlackboardType]):
     @action
     @functools.wraps(f)
-    def _inner():
+    def _inner(*a, **k):
         yield f
 
     return _inner
@@ -104,26 +112,26 @@ def _with_stack_reset(f: TreeNode[BlackboardType]):
     """
     with f as tick:
         # Set the expected call stack at the start of running this action
-        action_stack = __ctx_call_stack.get()
+        action_stack = _ctx.call_stack.get()
 
         @functools.wraps(tick)
         def _inner(b: BlackboardType):
             nonlocal action_stack
             # Fetch the current call stack
-            current_stack = __ctx_call_stack.get()
+            current_stack = _ctx.call_stack.get()
             # Set it to the expected value
-            __ctx_call_stack.set(action_stack)
+            _ctx.call_stack.set(action_stack)
             # Call the tick
             result = tick(b)
             # Update the expected stack
-            action_stack = __ctx_call_stack.get()
+            action_stack = _ctx.call_stack.get()
             # Reset before returning
-            __ctx_call_stack.set(current_stack)
+            _ctx.call_stack.set(current_stack)
             return result
 
         yield _inner
         # Reset to the actions stack so that the action can do teardown properly
-        __ctx_call_stack.set(action_stack)
+        _ctx.call_stack.set(action_stack)
 
 
 # ------------------------------------------------------------------------------
@@ -132,7 +140,7 @@ def _with_stack_reset(f: TreeNode[BlackboardType]):
 
 
 @action
-def sequential(*children: TreeNode[BlackboardType]):
+def sequential(node_id: IdType, *children: TreeNode[BlackboardType]):
     def gen() -> Generator[TreeStatus, BlackboardType, None]:
         blackboard = yield TreeStatus.RUNNING
         for child_context_manager in children:
@@ -166,7 +174,7 @@ def sequential(*children: TreeNode[BlackboardType]):
 
 
 @action
-def fallback(*children: TreeNode[BlackboardType]):
+def fallback(node_id: IdType, *children: TreeNode[BlackboardType]):
     def gen() -> Generator[TreeStatus, BlackboardType, None]:
         blackboard = yield TreeStatus.RUNNING
         for child_context_manager in children:
@@ -201,6 +209,7 @@ def fallback(*children: TreeNode[BlackboardType]):
 
 @action
 def repeat(
+    node_id: IdType,
     action_factory: Callable[[], TreeNode[BlackboardType]],
     continue_if: Literal[TreeStatus.SUCCESS, TreeStatus.FAILURE],
     count: int | None = None,
@@ -229,6 +238,9 @@ def repeat(
         blackboard = yield TreeStatus.RUNNING
         result = TreeStatus.SUCCESS
         for i, child_context_manager in enumerate(children):
+            # Clear the child tree graph for this node - this will result in child nodes overriding
+            # IDs of previous repetitions.
+            (_ctx.tree_graph.get() or {}).get(node_id, []).clear()
             with child_context_manager as child_action:
                 while (result := child_action(blackboard)) == TreeStatus.RUNNING:
                     blackboard = yield TreeStatus.RUNNING
@@ -267,6 +279,7 @@ redo = functools.partial(repeat, continue_if=TreeStatus.SUCCESS)
 
 @action
 def remap(
+    node_id: IdType,
     child: TreeNode[BlackboardType],
     mapping: dict[TreeStatus, TreeStatus],
 ):
@@ -281,6 +294,7 @@ def remap(
 
 @action
 def swap(
+    node_id: IdType,
     child: TreeNode[BlackboardType],
     *,
     from_: TreeStatus,
@@ -294,6 +308,7 @@ def swap(
 
 @action
 def always_return(
+    node_id: IdType,
     child: TreeNode[BlackboardType],
     *,
     always_return: TreeStatus,
@@ -309,6 +324,7 @@ def always_return(
 
 @action
 def failsafe(
+    node_id: IdType,
     check: Callable[[BlackboardType], bool],
     nominal: TreeNode[BlackboardType],
     failure: TreeNode[BlackboardType],
@@ -331,11 +347,11 @@ def failsafe(
                         yield result
                         return
             # An interrupt has occurred - we should mark these nodes as cancelled
-            running_node = __ctx_call_stack.get()
+            running_node = _ctx.call_stack.get()
             if running_node is not None:
-                _tree_status = __ctx_tree_status.get()
+                _tree_status = _ctx.tree_status.get() or {}
                 _tree_status[running_node] = TreeStatus.CANCELLED
-                __ctx_tree_status.set(_tree_status)
+                _ctx.tree_status.set(_tree_status)
         with failure as failure_action:
             while (
                 result := failure_action(blackboard)  # pyrefly: ignore
@@ -387,6 +403,7 @@ def any_running_is_running_allow_max_failures_failures(
 
 @action
 def parallel(
+    node_id: IdType,
     *children: TreeNode[BlackboardType],
     result_evaluation_function: Callable[
         [list[TreeStatus]], TreeStatus
@@ -401,10 +418,10 @@ def parallel(
     with contextlib.ExitStack() as stack:
         # We need to be the "parent" of all of these functions
         tick_functions = []
-        this_stack = __ctx_call_stack.get()
+        this_stack = _ctx.call_stack.get()
         for child in children:
             # Reset the call stack
-            __ctx_call_stack.set(this_stack)
+            _ctx.call_stack.set(this_stack)
             # use the _with_stack_reset wrapper to make sure this child manages its call stack properly
             tick_functions.append(stack.enter_context(_with_stack_reset(child)))
         is_done = False
@@ -419,3 +436,34 @@ def parallel(
             return result
 
         yield _inner
+
+
+def runner(f: Callable[P, T]) -> Callable[[], T]:
+    ctx = contextvars.copy_context()
+
+    @functools.wraps(f)
+    def _inner(*a, **k):
+        functools.partial(f, *a, **k)
+        return ctx.run(functools.partial(f, *a, **k))
+
+    return _inner
+
+
+__all__ = (
+    "action",
+    "always_return",
+    "failsafe",
+    "fallback",
+    "IdType",
+    "parallel",
+    "redo",
+    "remap",
+    "repeat",
+    "retry",
+    "runner",
+    "sequential",
+    "simple_action",
+    "swap",
+    "TreeStatus",
+    "viz",
+)

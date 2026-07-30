@@ -36,6 +36,7 @@ import tests.standard_actions as sa
         (bt.RUNNING, bt.RUNNING, sa.always_running, [bt.RUNNING]),
     ],
 )
+@bt.runner
 def test_single_remap(map_from, map_to, child, expected):
     with bt.remap(child(), {map_from: map_to}) as action:
         for expected_tick_result in expected:
@@ -43,6 +44,7 @@ def test_single_remap(map_from, map_to, child, expected):
             assert result == expected_tick_result
 
 
+@bt.runner
 @pytest.mark.parametrize(
     "map_from,map_to,child,expected",
     [
@@ -57,6 +59,7 @@ def test_single_remap(map_from, map_to, child, expected):
         (bt.RUNNING, bt.FAILURE, sa.always_running, [bt.FAILURE]),
     ],
 )
+@bt.runner
 def test_swap(map_from, map_to, child, expected):
     with bt.swap(child(), from_=map_from, to=map_to) as action:
         for expected_tick_result in expected:

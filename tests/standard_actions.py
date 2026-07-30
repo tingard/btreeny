@@ -2,6 +2,7 @@ import functools
 import itertools
 from typing import Any
 import btreeny as bt
+from btreeny import IdType
 
 
 @bt.simple_action
@@ -25,9 +26,11 @@ def never_runs(b: Any):
 
 
 @bt.action
-def run_then(result: bt.TreeStatus = bt.SUCCESS, count: int = 1):
+def run_then(node_id: IdType, result: bt.TreeStatus = bt.SUCCESS, count: int = 1):
+    print(f"Setting up node {node_id}")
     c = itertools.chain([bt.RUNNING] * count, itertools.repeat(result))
     yield lambda b: next(c)
+    print(f"Tearing down node {node_id}")
 
 
 run_then_ok = functools.partial(run_then, result=bt.SUCCESS)

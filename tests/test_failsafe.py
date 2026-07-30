@@ -52,6 +52,7 @@ def check_false_after_count(b: CountingBlackboard, max_count: int = 1):
         ),
     ],
 )
+@bt.runner
 def test_failsafe(check, nominal, failure, expected):
     b = CountingBlackboard()
     with bt.failsafe(check, nominal(), failure()) as action:
@@ -61,6 +62,7 @@ def test_failsafe(check, nominal, failure, expected):
             b.count += 1
 
 
+@bt.runner
 def test_raises_if_ticked_when_done():
     with bt.failsafe(check_always_true, sa.always_ok(), sa.always_ok()) as action:
         result = action(None)
