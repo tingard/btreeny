@@ -1,26 +1,25 @@
 from collections import deque
 from dataclasses import asdict, dataclass
+import importlib
 from typing import Callable
 
 try:
     from rich.pretty import pprint
-    from rich.tree import Tree
 
     __has_rich = True
-except ImportError:
+except ModuleNotFoundError:
     from pprint import pprint
 
     __has_rich = False
-import uuid
 
 try:
-    import rerun as rr
-
+    importlib.import_module("rerun")
     __has_rerun = True
 except ImportError:
     __has_rerun = False
 
 from ._ctx import (
+    IdType,
     tree_graph as __ctx_tree_graph,
     id_map as __ctx_id_map,
     tree_status as __ctx_tree_status,
@@ -36,9 +35,9 @@ def print_trace(print_func: Callable[[str], None] = print):
     print_func: (str) -> None
         The printing function to use, defaults to the builtin `print` function.
     """
-    _id_map = __ctx_id_map.get()
-    _tree_graph = __ctx_tree_graph.get()
-    _tree_status = __ctx_tree_status.get()
+    _id_map = __ctx_id_map.get() or {}
+    _tree_graph = __ctx_tree_graph.get() or {}
+    _tree_status = __ctx_tree_status.get() or {}
     root_actions = _tree_graph[None]
     q = deque()
     print_func(f"\n{' Trace ':-^50}")
@@ -75,18 +74,18 @@ def get_tree_status() -> "TreeStatusGraph":
     TreeStatus:
         The root of the behavior tree.
     """
-    _id_map = __ctx_id_map.get()
-    _tree_graph = __ctx_tree_graph.get()
-    _tree_status = __ctx_tree_status.get()
+    _id_map = __ctx_id_map.get() or {}
+    _tree_graph = __ctx_tree_graph.get() or {}
+    _tree_status = __ctx_tree_status.get() or {}
 
     root_actions = _tree_graph[None]
     assert len(root_actions) == 1
     root_action = root_actions[0]
-    node_map: dict[uuid.UUID, TreeStatusGraph] = {}
+    node_map: dict[IdType, TreeStatusGraph] = {}
     node_map[root_action] = TreeStatusGraph(
         node=_id_map[root_action], status=_tree_status[root_action], children=[]
     )
-    q = deque[uuid.UUID]([])
+    q = deque[IdType]([])
     q.append(root_action)
     while len(q) > 0:
         action = q.popleft()
@@ -106,6 +105,7 @@ def get_tree_status() -> "TreeStatusGraph":
 
 
 if __has_rerun:
+    import rerun as rr
 
     @dataclass
     class RerunGraph:
@@ -113,9 +113,9 @@ if __has_rerun:
         edges: rr.GraphEdges
 
     def rerun_tree_graph() -> RerunGraph:
-        _id_map = __ctx_id_map.get()
-        _tree_graph = __ctx_tree_graph.get()
-        _tree_status = __ctx_tree_status.get()
+        _id_map = __ctx_id_map.get() or {}
+        _tree_graph = __ctx_tree_graph.get() or {}
+        _tree_status = __ctx_tree_status.get() or {}
         keys = list(_tree_status.keys())
 
         def _color_from_status(s: TreeStatus) -> int:
@@ -150,18 +150,20 @@ if __has_rerun:
 
 
 if __has_rich:
+    from rich.pretty import pprint
+    from rich.tree import Tree
 
     def get_rich_tree() -> Tree:
-        _id_map = __ctx_id_map.get()
-        _tree_graph = __ctx_tree_graph.get()
-        _tree_status = __ctx_tree_status.get()
+        _id_map = __ctx_id_map.get() or {}
+        _tree_graph = __ctx_tree_graph.get() or {}
+        _tree_status = __ctx_tree_status.get() or {}
         try:
             root_actions = _tree_graph[None]
         except KeyError:
             return Tree("root")
         assert len(root_actions) == 1, "Expected one root action"
         root = root_actions[0]
-        q = deque[tuple[uuid.UUID, Tree]]()
+        q = deque[tuple[IdType, Tree]]()
         tree = Tree(f"{_id_map[root]} - {_tree_status[root].value}")
         q.append((root, tree))
         while len(q) > 0:

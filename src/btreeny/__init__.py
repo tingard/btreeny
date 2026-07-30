@@ -1,5 +1,4 @@
 import contextlib
-from copy import deepcopy
 import functools
 import itertools
 from typing import (
@@ -17,6 +16,7 @@ import uuid
 from ._get_name import get_name
 from ._tree_status import TreeStatus
 from ._ctx import (
+    IdType,
     call_stack as __ctx_call_stack,
     tree_graph as __ctx_tree_graph,
     id_map as __ctx_id_map,
@@ -40,8 +40,8 @@ class BehaviourCompleteError(RuntimeError):
 
 
 @contextlib.contextmanager
-def _manage_call_stack(id: uuid.UUID, name: str):
-    _id_map = deepcopy(__ctx_id_map.get())
+def _manage_call_stack(id: IdType, name: str):
+    _id_map = __ctx_id_map.get() or {}
     _id_map[id] = name
     __ctx_id_map.set(_id_map)
     # When we setup this action, set it on the call stack
@@ -49,7 +49,7 @@ def _manage_call_stack(id: uuid.UUID, name: str):
     # parent = None if len(stack) == 0 else stack[-1]
     __ctx_call_stack.set(id)
     # Add this to the node graph
-    _tree_graph = __ctx_tree_graph.get()
+    _tree_graph = __ctx_tree_graph.get() or {}
     parents_children = _tree_graph.setdefault(parent, [])
     parents_children.append(id)
     __ctx_tree_graph.set(_tree_graph)
@@ -69,14 +69,14 @@ def action(
     @functools.wraps(f)
     def inner(*args: P.args, **kwargs: P.kwargs):
         # Each invocation of the action function gets a new ID
-        self_id = uuid.uuid4()
+        self_id = uuid.uuid4().bytes
         with _manage_call_stack(self_id, self_name):
             with f(*args, **kwargs) as action:
 
                 @functools.wraps(action)
                 def action_func(blackboard: BlackboardType):
                     result = action(blackboard)
-                    _tree_status = __ctx_tree_status.get()
+                    _tree_status = __ctx_tree_status.get() or {}
                     _tree_status[self_id] = result
                     __ctx_tree_status.set(_tree_status)
                     return result
@@ -333,7 +333,7 @@ def failsafe(
             # An interrupt has occurred - we should mark these nodes as cancelled
             running_node = __ctx_call_stack.get()
             if running_node is not None:
-                _tree_status = __ctx_tree_status.get()
+                _tree_status = __ctx_tree_status.get() or {}
                 _tree_status[running_node] = TreeStatus.CANCELLED
                 __ctx_tree_status.set(_tree_status)
         with failure as failure_action:

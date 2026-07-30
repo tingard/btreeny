@@ -1,12 +1,13 @@
 import contextvars
-import uuid
 from ._tree_status import TreeStatus
 
-id_map = contextvars.ContextVar[dict[uuid.UUID, str]]("call_stack", default={})
-call_stack = contextvars.ContextVar[uuid.UUID | None]("call_stack", default=None)
-tree_graph = contextvars.ContextVar[dict[uuid.UUID | None, list[uuid.UUID]]](
-    "tree_graph", default={}
+IdType = bytes
+
+id_map = contextvars.ContextVar[dict[IdType, str] | None]("call_stack", default=None)
+call_stack = contextvars.ContextVar[IdType | None]("call_stack", default=None)
+tree_graph = contextvars.ContextVar[dict[IdType | None, list[IdType]] | None](
+    "tree_graph", default=None
 )
-tree_status = contextvars.ContextVar[dict[uuid.UUID, TreeStatus]](
-    "tree_status", default={}
+tree_status = contextvars.ContextVar[dict[IdType, TreeStatus] | None](
+    "tree_status", default=None
 )
