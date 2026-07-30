@@ -26,7 +26,6 @@ def clear_subtree(node_id: IdType):
             continue
         to_search.extend(c_of_p)
         to_clear.update(c_of_p)
-        print(len(to_search))
 
     if call_stack.get() in to_clear:
         call_stack.set(node_id)
