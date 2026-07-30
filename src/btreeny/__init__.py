@@ -240,7 +240,6 @@ def repeat(
         for i, child_context_manager in enumerate(children):
             # Clear the child tree graph for this node - this will result in child nodes overriding
             # IDs of previous repetitions.
-            print("Clearing subtree of node", node_id)
             _ctx.clear_subtree(node_id)
             with child_context_manager as child_action:
                 while (result := child_action(blackboard)) == TreeStatus.RUNNING:
