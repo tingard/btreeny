@@ -135,6 +135,56 @@ While we _could_ provide a utility that gives actions access to a pool by defaul
 
 An example of this pattern can be found in the `examples/non_blocking_tree.py` script.
 
+### The type system as access control
+
+One of the great perks of a typed blackboard and Generic actions is that we can express what actions can/can't do _via Python's type system_! For example, consider two actions, one of which can place tickets into a backlog, and the other can read from it. Our full blackboard might look like
+
+
+```python
+@dataclass
+class TicketingBlackboard:
+    tickets: queue.Queue[Ticket]
+    def put(self, ticket: Ticket):
+        self.tickets.put(ticket)
+
+    def poll(self) -> Ticket | None:
+        try:
+            return self.tickets.get_nowait()
+        except queue.Empty:
+            return None
+```
+
+We can then use the magic of ✨structural subtyping✨ to restrict what each action can do, using `Protocol`s. First, the insertion action
+
+```python
+class SupportsPutTicket(Protocol):
+    def put(self, ticket: Ticket): ...
+
+@btreeny.simple_action
+def put_ticket_action(blackboard: SupportsPutTicket):
+    # Mint and insert a new Ticket
+    blackboard.put(Ticket())
+    return btreeny.SUCCESS
+```
+
+And then the read action
+
+```python
+class SupportsPollTicket(Protocol):
+    def poll(self) -> Ticket | None: ...
+
+@btreeny.simple_action
+def poll_tickets_action(blackboard: SupportsPollTicket):
+    # Mint and insert a new Ticket
+    ticket = blackboard.poll()
+    # Do something with the ticket - maybe trigger a
+    # long-running task as above
+    return btreeny.SUCCESS
+```
+
+If `put_ticket_action` tried to `poll`, or `poll_ticket_action` tried to `put`, any type checker (mypy, pyright, pyrefly, ty, ...) would complain _before any code even runs_! This is (in my opinion) much better than `py_trees`' blackboard permissions model, but I'm biased.
+
+
 ## Controlling flow
 
 ### Sequential
