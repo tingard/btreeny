@@ -54,3 +54,16 @@ def test_raises_if_ticked_when_done():
         assert result == bt.SUCCESS
         with pytest.raises(bt.BehaviourCompleteError):
             _ = action(None)
+
+@bt.runner
+def test_handles_differing_length_chains():
+    result = bt.RUNNING
+    i = 0
+    with bt.parallel(
+        bt.redo(sa.run_then_ok, count=3),
+        bt.redo(sa.run_then_ok, count=2),
+    ) as action:
+        while result == bt.RUNNING:
+            result = action(None)
+            i += 1
+    assert i == 3

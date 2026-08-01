@@ -347,12 +347,8 @@ def failsafe(
                     case _:
                         blackboard = yield result
                         return
-            # An interrupt has occurred - we should mark these nodes as cancelled
-            running_node = _ctx.call_stack.get()
-            if running_node is not None:
-                _tree_status = _ctx.tree_status.get() or {}
-                _tree_status[running_node] = TreeStatus.CANCELLED
-                _ctx.tree_status.set(_tree_status)
+            # An interrupt has occurred - we should mark all current RUNNING child nodes as cancelled
+            _ctx.cancel_running_children(node_id)
         with failure as failure_action:
             while (
                 result := failure_action(blackboard)  # pyrefly: ignore
@@ -360,8 +356,6 @@ def failsafe(
                 blackboard = yield TreeStatus.RUNNING
             yield result
             return
-        yield TreeStatus.SUCCESS
-        return
 
     stepper = gen()
     next(stepper)
@@ -425,26 +419,38 @@ def parallel(
             _ctx.call_stack.set(this_stack)
             # use the _with_stack_reset wrapper to make sure this child manages its call stack properly
             tick_functions.append(stack.enter_context(_with_stack_reset(child)))
-        is_done = False
+            latched: list[TreeStatus | None] = [None] * len(tick_functions)
+            is_done = False
 
-        def _inner(blackboard: BlackboardType):
-            nonlocal is_done
-            if is_done:
-                raise BehaviourCompleteError("Ticked a finished behaviour.")
-            results = [func(blackboard) for func in tick_functions]
-            result = result_evaluation_function(results)
-            is_done = result != RUNNING
-            return result
+            def _inner(blackboard: BlackboardType):
+                nonlocal is_done
+                if is_done:
+                    raise BehaviourCompleteError("Ticked a finished behaviour.")
+                results: list[TreeStatus] = []
+                for i, func in enumerate(tick_functions):
+                    if (prev := latched[i]) is not None:
+                        results.append(prev)
+                        continue
+                    r = func(blackboard)
+                    if r != TreeStatus.RUNNING:
+                        latched[i] = r
+                    results.append(r)
+                result = result_evaluation_function(results)
+                is_done = result != TreeStatus.RUNNING
+                return result
 
         yield _inner
 
 
 def runner(f: Callable[P, T]) -> Callable[[], T]:
+    def reset_then_run(*a, **k):
+        _ctx.reset()
+        return f(*a, **k)
+
     @functools.wraps(f)
     def _inner(*a, **k):
         ctx = contextvars.copy_context()
-        _ctx.reset()
-        return ctx.run(functools.partial(f, *a, **k))
+        return ctx.run(functools.partial(reset_then_run, *a, **k))
 
     return _inner
 
