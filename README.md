@@ -2,54 +2,9 @@
 
 This package is a minimal(ish) implementation of [Behavior Trees](https://en.wikipedia.org/wiki/Behavior_tree_(artificial_intelligence,_robotics_and_control)) in Python. It mainly exists to explore a different way of building and running behavior trees in Python (using a more function-based approach).
 
-For production uses, we strongly recommend using a more battle-tested library such as [PyTrees](https://py-trees.readthedocs.io/en/devel/)! Not only is `btreeny` far more likely to cause bugs but the core implementation is meaningfully slower than `PyTrees` - we really do recommend putting in the effort to use it for production use-cases.
+A note on _when_ to use this library: I think it's pretty neat, but alternatives like [PyTrees](https://py-trees.readthedocs.io/en/devel/) are much more battle-hardened. I'd very much encourage you to consider and play with `btreeny` (and give feedback!), but rough edges are to be expected, and the minimial principle of the library means I'm likely to say no to major feature requests.
 
 For general tinkering, keep reading 👀
-
-```python
-from typing import TypeAlias
-import btreeny
-
-# Generic over blackboards - use dataclasses to get nice type hints!
-MyBlackboardType: TypeAlias = dict[str, str]
-
-# For the most simple case - define your actions as a function which takes a blackbaord
-# and returns a tree status
-@btreeny.simple_action
-def my_failing_action(blackboard: MyBlackboardType):
-    # You could modify the blackboard, or take actions here
-    return btreeny.FAILURE
-
-# For more complex actions
-@btreeny.action
-def my_running_action(node_id):
-    # Setup
-    # ...
-
-    # Yield a tick function
-    def _inner(blackboard: MyBlackboardType):
-        return btreeny.RUNNING
-    try:
-        yield inner
-    finally:
-        # Teardown
-        # ...
-
-# We support many standard control flow nodes - see below for options
-root = btreeny.fallback(
-    my_failing_action(),
-    my_running_action(),
-)
-
-# Running the tree can be done manually
-blackboard = {}
-result = btreeny.RUNNING
-with root as tick_function:
-    while result == btreeny.RUNNING:
-        # We expect trees to modify the blackboard in-place
-        result = tick_function(blackboard)
-```
-
 
 ## Writing an action
 
@@ -95,7 +50,7 @@ with httpx.Client() as client:
 As the client would have been closed for us!
 
 
-## Blackboards
+## Using Blackboards
 
 In the above example, we committed a cardinal sin of behavior trees! The `client.get(url)` call is **blocking**, meaning the tree will fail to tick to completion.
 
@@ -184,6 +139,27 @@ def poll_tickets_action(blackboard: SupportsPollTicket):
 
 If `put_ticket_action` tried to `poll`, or `poll_ticket_action` tried to `put`, any type checker (mypy, pyright, pyrefly, ty, ...) would complain _before any code even runs_! This is (in my opinion) much better than `py_trees`' blackboard permissions model, but I'm biased.
 
+## Running a tree
+
+Behind the scenes, we rely on the use of the `contextvars` library. For this reason it's recommended that you make use of the `btreeny.runner` decorator when running your trees:
+
+```python
+@btreeny.runner
+def main():
+    tree = btreeny.fallback(
+        btreeny.redo(
+            functools.partial(btreeny.sequential, do_action_a(), do_action_b())
+        ),
+        do_fallback_action()
+    )
+    tick_freq = 10
+    with tree as tick:
+        while True:
+            # We can make use of the rate_limit utility to ensure that
+            # ticks are no faster than the desired period
+            with btreeny.rate_limit(int(1e9 / freq)):
+                tick()
+```
 
 ## Controlling flow
 

@@ -3,6 +3,7 @@ import contextvars
 import functools
 import hashlib
 import itertools
+import time
 from typing import (
     Callable,
     Concatenate,
@@ -448,6 +449,15 @@ def runner(f: Callable[P, T]) -> Callable[[], T]:
     return _inner
 
 
+@contextlib.contextmanager
+def rate_limit(period_ns: int):
+    tick_start = time.monotonic_ns()
+    tick_end = tick_start + period_ns
+    yield
+    # Wait until the expected end time
+    time.sleep(max(0, tick_end - time.monotonic_ns()) / 1e9)
+
+
 __all__ = (
     "action",
     "always_return",
@@ -455,6 +465,7 @@ __all__ = (
     "fallback",
     "IdType",
     "parallel",
+    "rate_limit",
     "redo",
     "remap",
     "repeat",
