@@ -4,7 +4,7 @@ This package is a minimal(ish) implementation of [Behavior Trees](https://en.wik
 
 A note on _when_ to use this library: I think it's pretty neat, and leverages the type system for a better developer experience (and correctness) than other Python libraries I've seen, but alternatives like [PyTrees](https://py-trees.readthedocs.io/en/devel/) are much more battle-hardened.
 
-I'd very much encourage you to consider and play with `btreeny` (and give feedback!), but rough edges are to be expected, and the minimal principle of the library means I'm likely to say no to major feature requests.
+I'd very much encourage you to consider and play with `btreeny` (and give feedback!), but rough edges are to be expected (for now).
 
 For general tinkering, keep reading 👀
 
@@ -242,3 +242,59 @@ graph = btreeny.viz.rerun_tree_graph()
 # Log to Rerun
 rr.log("tree", graph.nodes, graph.edges)
 ```
+
+## `btreeny` or PyTrees?
+
+Both libraries do fundamentally the same thing, so choosing between them comes down to what
+you want to optimise for. PyTrees is a mature platform with a lot of tooling built up around
+it; `btreeny` is small and leans hard on the type system.
+
+### Use PyTrees if...
+
+**You're on ROS 2.**
+
+`py_trees_ros` and the tutorials that come with it are a proper ecosystem, and `btreeny` has nothing to offer you here.
+
+**You want batteries included.**
+
+Stock behaviours, decorators, idioms like `oneshot` and `either_or`, visitors, pre/post-tick handlers, graphviz rendering, CLI tooling - it's all there, and it all works.
+
+**You want to watch your data flow at runtime.**
+
+Registering keys against clients means PyTrees can tell you which behaviour touched what, and hand you an activity stream and a dot graph with the variables drawn right in. That's genuinely lovely for debugging.
+
+**You've got a team, or people rotating through the codebase.**
+
+PyTrees was designed so that scenario development could be handed off to people who aren't control engineers, and the docs and demos reflect that.
+
+**You need something that won't move under you.**
+
+PyTrees is on 2.x and has years of use behind it. This library is... not that 😅
+
+### Use `btreeny` if...
+
+**You'd like the type checker to do some work for you.**
+
+Your blackboard is a dataclass *you* own rather than a global string-keyed store, and actions ask for exactly what they need via `Protocol`s - so an action grabbing at state it has no business touching is an error *before you run anything*. 
+
+Worth being fair to PyTrees here: its key registration isn't really trying to be an enforcement mechanism, and the docs are upfront that it's there to help you debug (which I'd argue typing does even better). So it's static guarantees versus runtime visibility. I know which one I'd rather have, but I'm biased 😛
+
+**Your actions own resources.**
+
+Actions are context managers, so your connection pool, file handle or subprocess gets set up and torn down along with the node itself, and `ExitStack` composes exactly like it does everywhere else in Python.
+
+**You'd rather write a function than a subclass.** 
+
+No base class to inherit from and no lifecycle methods to memorise - a decorator and a closure and you're done.
+
+**You want to read the whole library.**
+
+`btreeny` is minimal on purpose, and I'm likely to say no to things that would change that. That's a straight-up cost if you need something it hasn't got, and a win if you'd like to actually understand what you're depending on.
+
+**You're not doing robotics.**
+
+Nothing in here assumes you are - trees are just as happy orchestrating jobs, retries or agent workflows. (And if you *are*, the Rerun logging is already sitting there waiting for you 👀)
+
+### tl;dr
+
+If it's going into production and something important depends on it, use PyTrees. If you're starting something fresh, like your types, and want a library small enough to hold in your head, give `btreeny` a go - and then come and tell me what broke! The only way to make this library more production-friendly is to have people try.
