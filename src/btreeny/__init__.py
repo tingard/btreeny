@@ -428,8 +428,7 @@ def switch(
     the check failing, this composite node will return its response and the tree will progress
     without entering the secondary mode.
     """
-    TreeStatus.FAILURE
-    _check_distinct((primary, secondary), "failsafe")
+    _check_distinct((primary, secondary), "switch")
 
     def gen() -> Generator[TreeStatus, BlackboardType, None]:
         blackboard = yield TreeStatus.RUNNING

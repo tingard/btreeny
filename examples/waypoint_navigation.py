@@ -256,7 +256,7 @@ class SupportsHasBattery(Protocol):
     def ask_robot_battery(self) -> float: ...
 
 
-# Note this is just a check use for a `failsafe` - not an action
+# Note this is just a check use for a `switch` - not an action
 def has_battery(b: SupportsHasBattery, threshold=0.2):
     return b.ask_robot_battery() > threshold
 
