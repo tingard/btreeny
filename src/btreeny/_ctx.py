@@ -31,9 +31,9 @@ def clear_subtree(node_id: IdType):
             continue
         to_search.extend(c_of_p)
         to_clear.update(c_of_p)
-
+    # If we are about to clear a node that is currently active, abort
     if call_stack.get() in to_clear:
-        call_stack.set(node_id)
+        raise RuntimeError("Attempted to clear a node that is currently active.")
 
     curr_tree_status = tree_status.get() or {}
     curr_id_map = id_map.get() or {}

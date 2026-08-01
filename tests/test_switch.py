@@ -55,7 +55,7 @@ def check_false_after_count(b: CountingBlackboard, max_count: int = 1):
 @bt.runner
 def test_failsafe(check, nominal, failure, expected):
     b = CountingBlackboard()
-    with bt.failsafe(check, nominal(), failure()) as action:
+    with bt.switch(check, nominal(), failure()) as action:
         for expected_tick_result in expected:
             result = action(b)
             assert result == expected_tick_result
@@ -64,7 +64,7 @@ def test_failsafe(check, nominal, failure, expected):
 
 @bt.runner
 def test_raises_if_ticked_when_done():
-    with bt.failsafe(check_always_true, sa.always_ok(), sa.always_ok()) as action:
+    with bt.switch(check_always_true, sa.always_ok(), sa.always_ok()) as action:
         result = action(None)
         assert result == bt.SUCCESS
         with pytest.raises(bt.BehaviourCompleteError):

@@ -2,7 +2,7 @@ from collections import deque
 from dataclasses import dataclass, field
 import math
 import time
-from typing import Callable
+from typing import Protocol
 import btreeny
 import btreeny.viz
 import rerun as rr
@@ -96,107 +96,235 @@ class Robot:
         console.print(f":robot: Setting new waypoint to {waypoint}")
         self.waypoint = waypoint
 
+    def tell_start_charging(self):
+        console.print(":robot: :electric_plug: Started charging")
+
+    def tell_stop_charging(self):
+        console.print(":robot: :electric_plug: Stopped charging")
+
 
 @dataclass(kw_only=True)
 class Blackboard:
     destinations: deque[str]
     current_location: Position
-    is_charging: bool = False
-    waypoint: NamedPosition | None = None
-    tell_waypoint: Callable[[Position], None]
-    ask_position: Callable[[], Position]
-    ask_battery: Callable[[], float]
-    ask_robot_waypoint: Callable[[], Position | None]
+    desired_waypoint: NamedPosition | None = None
+    robot: Robot
+
+    # Methods grouped into blackboard interaction and robot direct interaction
+    # rule of thumb _should_ be that general blackboard stuff should be
+    # focused on inter-node comms (e.g. the backlog of locations to visit),
+    # and the ask/tell robot stuff should be specific to a node.
+    #
+    # Not sure how well I've achieved that here... It may be better to have a
+    # dedicated "telemetry reading" section of the tree (i.e. using a parrallel
+    # node), and then have telemetry as a read-only properties which actions can
+    # access.
+
+    def get_next_destination(self) -> str | None:
+        if len(self.destinations) == 0:
+            return None
+        return self.destinations.popleft()
+
+    def set_desired_waypoint(self, location: NamedPosition | None):
+        self.desired_waypoint = location
+
+    def get_desired_waypoint(self) -> NamedPosition | None:
+        return self.desired_waypoint
+
+    def has_desired_waypoint(self) -> bool:
+        return self.desired_waypoint is not None
+
+    def add_priority_destination(self, position: NamedPosition):
+        self.destinations.appendleft(position.name)
+
+    def ask_robot_position(self) -> Position:
+        return self.robot.position
+
+    def ask_robot_battery(self) -> float:
+        return self.robot.battery
+
+    def ask_robot_waypoint(self) -> Position | None:
+        return self.robot.waypoint
+
+    def tell_robot_waypoint(self, position: Position):
+        self.robot.tell_waypoint(position)
+
+    def tell_robot_stop_charging(self):
+        self.robot.tell_stop_charging()
+
+    def tell_robot_start_charging(self):
+        self.robot.tell_start_charging()
+
+    def ask_count_remaining_destinations(self):
+        return len(self.destinations)
+
+
+# set_next_waypoint requires the ability to query whether a waypoint is set,
+# what the next destination is, and the ability to set a waypoint
+class SupportsSetNextWaypointAction(Protocol):
+    def has_desired_waypoint(self) -> bool: ...
+    def get_next_destination(self) -> str | None: ...
+    def set_desired_waypoint(self, location: NamedPosition | None): ...
 
 
 @btreeny.simple_action
-def set_next_waypoint(b: Blackboard):
-    if b.waypoint is not None:
-        return btreeny.SUCCESS
-    try:
-        location = b.destinations.popleft()
-    except IndexError:
+def set_next_waypoint(b: SupportsSetNextWaypointAction):
+    location = b.get_next_destination()
+    if location is None:
+        print("No locations left...")
         return btreeny.FAILURE
-    b.waypoint = LOCATIONS[location]
+
+    b.set_desired_waypoint(LOCATIONS[location])
+
     return btreeny.SUCCESS
 
 
+# move_to_waypoint needs to fetch both the desired waypoint and the current robot
+# state, and be able to command a new waypoint (this long list of responsibilities
+# by itself indicates the action should probably be decomposed into a series of
+# smaller actions!)
+class SupportsMoveToWaypointAction(Protocol):
+    def get_desired_waypoint(self) -> NamedPosition | None: ...
+    def ask_robot_waypoint(self) -> Position | None: ...
+    def tell_robot_waypoint(self, position: Position): ...
+    def ask_robot_position(self) -> Position: ...
+
+
 @btreeny.simple_action
-def move_to_waypoint(b: Blackboard):
-    if b.waypoint is None:
-        return btreeny.SUCCESS
+def move_to_waypoint(b: SupportsMoveToWaypointAction):
+    desired_waypoint = b.get_desired_waypoint()
+    if desired_waypoint is None:
+        return btreeny.FAILURE
+
     # Set the waypoint on the robot
     robot_waypoint = b.ask_robot_waypoint()
-    if robot_waypoint is None or robot_waypoint != b.waypoint:
-        b.tell_waypoint(b.waypoint)
-    if b.ask_position().distance_to(b.waypoint) < 0.01:
-        b.waypoint = None
+    if robot_waypoint != desired_waypoint:
+        b.tell_robot_waypoint(desired_waypoint)
+    # TODO: Waiting for navigation should be a new action!
+    if b.ask_robot_position().distance_to(desired_waypoint) < 0.01:
         return btreeny.SUCCESS
     return btreeny.RUNNING
 
 
+# Setting the home position just needs to be able to set a waypoint
+class SupportsSetHome(Protocol):
+    def set_desired_waypoint(self, location: NamedPosition | None): ...
+
+
 @btreeny.simple_action
-def set_home(b: Blackboard):
-    b.waypoint = LOCATIONS["home"]
+def set_home(b: SupportsSetHome):
+    b.set_desired_waypoint(LOCATIONS["home"])
     return btreeny.SUCCESS
 
 
+# Starting to charge simply needs the appropriate `tell` command
+class SupportsStartChargingAction(Protocol):
+    def tell_robot_start_charging(self): ...
+
+
 @btreeny.simple_action
-def charge_at_home(b: Blackboard):
-    if b.ask_battery() < 1.0:
-        b.is_charging = True
+def start_charging(b: SupportsStartChargingAction):
+    b.tell_robot_start_charging()
+    return btreeny.SUCCESS
+
+
+# Waiting to be fully charged only needs to know the current battery
+class SupportsWaitForChargeCompleteAction(Protocol):
+    def ask_robot_battery(self) -> float: ...
+
+
+@btreeny.simple_action
+def wait_for_charge_complete(b: SupportsWaitForChargeCompleteAction):
+    if b.ask_robot_battery() < 0.99:
         return btreeny.RUNNING
-    b.is_charging = False
     return btreeny.SUCCESS
 
 
-def has_battery(b: Blackboard, threshold=0.2):
-    return b.ask_battery() > threshold
+# Stopping charging simply needs the appropriate `tell` command
+class SupportsStopChargingAction(Protocol):
+    def tell_robot_stop_charging(self): ...
 
 
 @btreeny.simple_action
-def push_current_waypoint_to_stack(b: Blackboard):
-    if b.waypoint is None:
-        return btreeny.SUCCESS
-    b.destinations.appendleft(b.waypoint.name)
-    b.waypoint = None
+def stop_charging(b: SupportsStopChargingAction):
+    b.tell_robot_stop_charging()
     return btreeny.SUCCESS
 
 
+# The has battery check only needs to ask for the battery level
+class SupportsHasBattery(Protocol):
+    def ask_robot_battery(self) -> float: ...
+
+
+# Note this is just a check use for a `failsafe` - not an action
+def has_battery(b: SupportsHasBattery, threshold=0.2):
+    return b.ask_robot_battery() > threshold
+
+
+# Pushing the current waypoint back into the stack needs to get the
+# current waypoint, and add a priority waypoint to be driven to next
+class SupportsPushCurrentWaypointToStackAction(Protocol):
+    def get_desired_waypoint(self) -> NamedPosition | None: ...
+    def add_priority_destination(self, position: NamedPosition): ...
+
+
 @btreeny.simple_action
-def ensure_all_waypoints_completed(b: Blackboard):
-    if len(b.destinations) == 0:
+def push_current_waypoint_to_stack(b: SupportsPushCurrentWaypointToStackAction):
+    if (desired_waypoint := b.get_desired_waypoint()) is not None:
+        b.add_priority_destination(desired_waypoint)
+    return btreeny.SUCCESS
+
+
+class SupportsClearCurrentWaypointAction(Protocol):
+    def set_desired_waypoint(self, location: NamedPosition | None): ...
+
+
+@btreeny.simple_action
+def clear_current_waypoint(b: SupportsClearCurrentWaypointAction):
+    b.set_desired_waypoint(None)
+    return btreeny.SUCCESS
+
+
+class SupportsEnsureAllWaypointsCompleteAction(Protocol):
+    def ask_count_remaining_destinations(self) -> int: ...
+
+
+@btreeny.simple_action
+def ensure_all_waypoints_completed(b: SupportsEnsureAllWaypointsCompleteAction):
+    if b.ask_count_remaining_destinations() == 0:
         return btreeny.SUCCESS
     return btreeny.FAILURE
 
 
-def make_navigate():
+def make_navigate() -> btreeny.TreeNode[Blackboard]:
     return btreeny.redo(
-        lambda: btreeny.sequential(move_to_waypoint(), set_next_waypoint())
+        lambda: btreeny.sequential(set_next_waypoint(), move_to_waypoint())
     )
 
 
-def make_recharge():
+def make_recharge() -> btreeny.TreeNode[Blackboard]:
     return btreeny.sequential(
         # Be sure to save the current waypoint to allow resuming of the interrupted task
         push_current_waypoint_to_stack(),
+        clear_current_waypoint(),
         set_home(),
         move_to_waypoint(),
-        charge_at_home(),
+        start_charging(),
+        wait_for_charge_complete(),
+        stop_charging(),
     )
 
 
 def main(rerun: bool = False, rerun_url: str = "rerun+http://172.26.96.1:9876/proxy"):
-    robot = Robot(speed=0.2, discharge_rate=0.05)
+    robot = Robot(speed=0.3, discharge_rate=0.1)
 
+    # Using a switch means that when we are low on battery we will enter a failsafe mode where
+    # we move to our charger. When(/if) the failsafe behvior returns, the action finishes.
+    # By wrapping this switch in a redo (which retries on success, and exits on failure),
+    # we will allow the robot to continue to the next waypoint.
     loop = btreeny.redo(
-        # Using a failsafe means that when we are low on battery we will enter a failsafe mode where
-        # we move to our charger. When(/if) the failsafe behvior returns, the action finishes.
-        # By wrapping this failsafe in a repeat, we will allow the robot to continue to the next
-        # waypoint
-        lambda: btreeny.failsafe(
+        lambda: btreeny.switch(
             has_battery,
-            # These have to be functions as the action must be rebuilt
             make_navigate(),
             make_recharge(),
         )
@@ -208,12 +336,9 @@ def main(rerun: bool = False, rerun_url: str = "rerun+http://172.26.96.1:9876/pr
     )
 
     blackboard = Blackboard(
+        robot=robot,
         destinations=deque(("north", "east", "south", "west", "home")),
         current_location=LOCATIONS["home"],
-        tell_waypoint=robot.tell_waypoint,
-        ask_battery=lambda: robot.battery,
-        ask_position=lambda: robot.position,
-        ask_robot_waypoint=lambda: robot.waypoint,
     )
     if rerun:
         rr.init("btreeny-waypoint-navigation", spawn=False)
@@ -227,32 +352,34 @@ def main(rerun: bool = False, rerun_url: str = "rerun+http://172.26.96.1:9876/pr
             ),
             static=True,
         )
+    result: None | btreeny.TreeStatus = None
+    try:
+        with Live(auto_refresh=False, console=console) as live:
+            with root as tree:
+                while True:
+                    robot.sense()
+                    result = tree(blackboard)
+                    if rerun:
+                        rr.set_time("posix_time", timestamp=time.monotonic())
+                        rr.log(
+                            "world/robot",
+                            rr.Points3D(
+                                [(robot.position.x, robot.position.y, 0)], radii=[0.2]
+                            ),
+                        )
+                        graph = btreeny.viz.rerun_tree_graph()
+                        rr.log("behavior-tree", graph.nodes, graph.edges)
 
-    with Live(auto_refresh=False, console=console) as live:
-        with root as tree:
-            while True:
-                robot.sense()
-                result = tree(blackboard)
-                if rerun:
-                    rr.set_time("posix_time", timestamp=time.monotonic())
-                    rr.log(
-                        "world/robot",
-                        rr.Points3D(
-                            [(robot.position.x, robot.position.y, 0)], radii=[0.2]
-                        ),
+                    columns = Columns(
+                        [btreeny.viz.get_rich_tree()], equal=True, expand=True
                     )
-                    graph = btreeny.viz.rerun_tree_graph()
-                    rr.log("behavior-tree", graph.nodes, graph.edges)
-
-                columns = Columns(
-                    [btreeny.viz.get_rich_tree()], equal=True, expand=True
-                )
-                live.update(columns, refresh=True)
-                if result != btreeny.RUNNING:
-                    break
-                time.sleep(0.1)
-    console.print(f"Ended with result {result}")
-    console.print(blackboard)
+                    live.update(columns, refresh=True)
+                    if result != btreeny.RUNNING:
+                        break
+                    time.sleep(0.1)
+    finally:
+        console.print(f"Ended with result {result}")
+        console.print(blackboard)
 
 
 if __name__ == "__main__":
