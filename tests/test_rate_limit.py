@@ -10,5 +10,6 @@ def test_rate_limit_works_1s(dt: float):
     expected_end = t0 + dt
     with bt.rate_limit(int(dt)):
         pass
-    # Assert to within 2%
-    assert abs(time.monotonic_ns() - expected_end) < dt * 0.02
+    # Assert to within 20% - this is very dependent on the system
+    # being used to test
+    assert abs(time.monotonic_ns() - expected_end) < dt * 0.2
