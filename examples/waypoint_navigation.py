@@ -193,13 +193,13 @@ def move_to_waypoint(b: SupportsMoveToWaypointAction):
     robot_waypoint = b.ask_robot_waypoint()
     if robot_waypoint != desired_waypoint:
         b.tell_robot_waypoint(desired_waypoint)
-    # TODO: Waiting for navigation should be a new node.
+    # TODO: Waiting for navigation should be a new node!
     if b.ask_robot_position().distance_to(desired_waypoint) < 0.01:
         return btreeny.SUCCESS
     return btreeny.RUNNING
 
 
-# ...
+# Setting the home position just needs to be able to set a waypoint
 class SupportsSetHome(Protocol):
     def set_desired_waypoint(self, location: NamedPosition | None): ...
 
@@ -221,8 +221,7 @@ def start_charging(b: SupportsStartChargingAction):
     return btreeny.SUCCESS
 
 
-# Waiting to be fully charged only needs to know the current
-# battery
+# Waiting to be fully charged only needs to know the current battery
 class SupportsWaitForChargeCompleteAction(Protocol):
     def ask_robot_battery(self) -> float: ...
 
