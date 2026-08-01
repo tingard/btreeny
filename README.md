@@ -2,7 +2,9 @@
 
 This package is a minimal(ish) implementation of [Behavior Trees](https://en.wikipedia.org/wiki/Behavior_tree_(artificial_intelligence,_robotics_and_control)) in Python. It mainly exists to explore a different way of building and running behavior trees in Python (using a more function-based approach).
 
-A note on _when_ to use this library: I think it's pretty neat, but alternatives like [PyTrees](https://py-trees.readthedocs.io/en/devel/) are much more battle-hardened. I'd very much encourage you to consider and play with `btreeny` (and give feedback!), but rough edges are to be expected, and the minimial principle of the library means I'm likely to say no to major feature requests.
+A note on _when_ to use this library: I think it's pretty neat, and leverages the type system for butter developer experience (and correctness) than other Python libraries I've seen, but alternatives like [PyTrees](https://py-trees.readthedocs.io/en/devel/) are much more battle-hardened.
+
+I'd very much encourage you to consider and play with `btreeny` (and give feedback!), but rough edges are to be expected, and the minimial principle of the library means I'm likely to say no to major feature requests.
 
 For general tinkering, keep reading 👀
 
@@ -13,46 +15,42 @@ In `btreeny`, an action is specified as a context which returns a callable funct
 For example, an action which polls a URL until it gets a 200 status code, and will fail after some number of retries, might look like:
 
 ```python
+from itertools import count
+
 @btreeny.action
 def poll_url(node_id, url: str, retries: int=10):
     # setup a client to allow connection pooling
-    client = httpx.Client()
-    retry_count = 0
-    def tick(blackboard: Any):
-        # Since we're assigning to retry_count, we should declare it as nonlocal
-        # to this function's scope
-        nonlocal retry_count
-        if retry_count > retries:
-            return btreeny.FAILURE
-        response = client.get(url)
-        retry_count += 1
-        if response.status_code == 200:
-            return btreeny.SUCCESS
-        return btreeny.RUNNING
-    # Use a try... finally block to ensure cleanup is run
-    try:
-        # yield the tick function
+    retry_count = count()
+    with httpx.Client() as client:
+        def tick(blackboard: Any):
+            if next(retry_count) > retries:
+                return btreeny.FAILURE
+            # There's something fishy about this line
+            # read on to find out what.
+            response = client.get(url)
+            if response.status_code == 200:
+                return btreeny.SUCCESS
+            return btreeny.RUNNING
+        
         yield tick
-    finally:
-        # We can finish the function with our cleanup
-        client.close()
 ```
 
-Note that in this case it'd have been more ergonomic to use 
+You can (and should) also make use of `try: ... except: ...` blocks to gracefully shutdown an action, andutilities like `contextlib.ExitStack` for more advanced chaining!
+
+### Simple Actions
+
+`btreeny` lets you simplify some of the above using the `simple_action` decorator, which is more appropriate if you have a pure function:
 
 ```python
-with httpx.Client() as client:
-    def tick(...):
-        ...
-    yield tick
+@btreeny.simple_action
+def print_hello_world(blackboard: Any):
+    print("Hello, world!")
+    return btreeny.SUCCESS
 ```
-
-As the client would have been closed for us!
-
 
 ## Using Blackboards
 
-In the above example, we committed a cardinal sin of behavior trees! The `client.get(url)` call is **blocking**, meaning the tree will fail to tick to completion.
+In the above example, we committed a cardinal sin of behavior trees! The `client.get(url)` call is **blocking**, meaning the tree tick will not return until the response has. This prevents reactive behaviours and other checks for running, and must be avoided.
 
 A better pattern is to run the call in a background thread and return `RUNNING`. For example, if we have some blocking function `long_running_job` which we need to monitor, we can initialize a thread pool and make it available in our blackboard. Actions can then submit jobs to this thread pool and monitor for completion.
 
@@ -74,19 +72,24 @@ def long_running_action(node_id):
     _fut: concurrent.futures[bool] | None = None
     def _inner(b: Blackboard):
         nonlocal _fut
+        # If we haven't yet created the task, set it up
         if _fut is None:
             _fut = b.pool.submit(long_running_job)
+            return btreeny.RUNNING
+        # Attempt to fetch the future's result
         try:
             result = _current_response.result(timeout=0)
-            if result:
-                return btreeny.SUCCESS
-            else:
-                return btreeny.FAILURE
         except concurrent.futures.TimeoutError:
+            # A timeout implies the task is still running
             return btreeny.RUNNING
+        # We got a result! Return appropriately.
+        if result:
+            return btreeny.SUCCESS
+        else:
+            return btreeny.FAILURE
 ```
 
-While we _could_ provide a utility that gives actions access to a pool by default, that wouldn't be very minimal of us would it 😛
+While we _could_ provide a utility that gives actions access to a pool by default, that wouldn't be very minimal of us would it 😛 Letting you set it up on your blackboard means different pools could be used, or even larger scale compute like Dask or _the cloud_! ☁️
 
 An example of this pattern can be found in the `examples/non_blocking_tree.py` script.
 

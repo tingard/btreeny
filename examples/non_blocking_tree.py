@@ -5,8 +5,7 @@ import logging
 from rich.live import Live
 import time
 
-import btreeny
-import btreeny.viz
+import btreeny as bt
 
 
 @dataclass
@@ -20,17 +19,20 @@ def slow_task(n: float):
     return True
 
 
-def spawn_task(node_id: bytes, n: float):
+@bt.action
+def long_running_action(node_id: bytes, n: int):
+    bt.update_name(node_id, f"spawn_task_{n}")
+
     _current_response: Future[bool] | None = None
 
-    def _inner(blackboard: Blackboard) -> btreeny.TreeStatus:
+    def _inner(blackboard: Blackboard) -> bt.TreeStatus:
         nonlocal _current_response
         if _current_response is None:
             blackboard.logger.debug("[%s] Running slow_task for: %s", node_id.hex, n)
             _current_response = blackboard.pool.submit(functools.partial(slow_task, n))
-            return btreeny.RUNNING
+            return bt.RUNNING
         if not _current_response.done():
-            return btreeny.RUNNING
+            return bt.RUNNING
         try:
             result = _current_response.result(timeout=0)
             blackboard.logger.debug("[%s] Received %s", node_id.hex, result)
@@ -38,22 +40,31 @@ def spawn_task(node_id: bytes, n: float):
             blackboard.logger.warning(
                 "[%s] Future was cancelled", node_id, exc_info=True
             )
-            return btreeny.FAILURE
+            return bt.FAILURE
         except TimeoutError:
-            return btreeny.RUNNING
-        return btreeny.SUCCESS
+            return bt.RUNNING
+        return bt.SUCCESS
 
     yield _inner
 
 
+@bt.simple_action
+def print_done(*a):
+    print("Done")
+    return bt.SUCCESS
+
+
+@bt.runner
 def main():
-    root = btreeny.redo(
-        lambda: btreeny.parallel(
-            # Slightly hacky way of altering task names to reflect params
-            btreeny.action(spawn_task, name="spawn_task_1")(1),
-            btreeny.action(spawn_task, name="spawn_task_4")(4),
-            btreeny.action(spawn_task, name="spawn_task_2")(2),
-            btreeny.action(spawn_task, name="spawn_task_3")(3),
+    root = bt.redo(
+        lambda: bt.sequential(
+            bt.parallel(
+                long_running_action(1),
+                # long_running_action(4),
+                long_running_action(2),
+                long_running_action(3),
+            ),
+            print_done(),
         ),
         count=2,
     )
@@ -63,17 +74,15 @@ def main():
     # shorter run durations
     blackboard = Blackboard(pool=ThreadPoolExecutor(max_workers=2))
     blackboard.logger.setLevel(logging.DEBUG)
-    result = btreeny.RUNNING
-    with Live() as live, root as tick:
-        while result == btreeny.RUNNING:
-            result = tick(blackboard)
-            live.update(btreeny.viz.get_rich_tree())
-            time.sleep(0.1)
+    result = bt.RUNNING
+    with Live(auto_refresh=False) as live, root as tick:
+        while result == bt.RUNNING:
+            # Tick at 1hz
+            with bt.rate_limit(10**9):
+                result = tick(blackboard)
+                live.update(bt.viz.get_rich_tree(), refresh=True)
 
 
 if __name__ == "__main__":
-    import contextvars
-
-    ctx = contextvars.copy_context()
     logging.getLogger(__file__).setLevel(logging.DEBUG)
-    ctx.run(main)
+    main()

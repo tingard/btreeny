@@ -18,7 +18,7 @@ from typing import (
 
 from ._get_name import get_name
 from ._tree_status import TreeStatus
-from ._ctx import IdType
+from ._ctx import IdType, update_name
 from . import viz, _ctx
 
 BlackboardType = TypeVar("BlackboardType")
@@ -239,9 +239,6 @@ def repeat(
         blackboard = yield TreeStatus.RUNNING
         result = TreeStatus.SUCCESS
         for i, child_context_manager in enumerate(children):
-            # Clear the child tree graph for this node - this will result in child nodes overriding
-            # IDs of previous repetitions.
-            _ctx.clear_subtree(node_id)
             with child_context_manager as child_action:
                 while (result := child_action(blackboard)) == TreeStatus.RUNNING:
                     blackboard = yield TreeStatus.RUNNING
@@ -254,6 +251,9 @@ def repeat(
                 else:
                     yield result
                     return
+            # Clear the child tree graph for this node - this will result in child nodes overriding
+            # IDs of previous repetitions.
+            _ctx.clear_subtree(node_id)
         yield result
         return
 
@@ -475,5 +475,6 @@ __all__ = (
     "simple_action",
     "swap",
     "TreeStatus",
+    "update_name",
     "viz",
 )

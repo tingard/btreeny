@@ -49,3 +49,9 @@ def clear_subtree(node_id: IdType):
     tree_graph.set(curr_tree_graph)
     tree_status.set(curr_tree_status)
     id_map.set(curr_id_map)
+
+
+def update_name(node_id: IdType, new_name: str):
+    if (curr_id_map := id_map.get()) is not None:
+        curr_id_map[node_id] = new_name
+        id_map.set(curr_id_map)
