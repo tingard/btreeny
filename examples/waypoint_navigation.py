@@ -2,7 +2,7 @@ from collections import deque
 from dataclasses import dataclass, field
 import math
 import time
-from typing import Callable
+from typing import Protocol
 import btreeny
 import btreeny.viz
 import rerun as rr
@@ -96,70 +96,215 @@ class Robot:
         console.print(f":robot: Setting new waypoint to {waypoint}")
         self.waypoint = waypoint
 
+    def tell_start_charging(self):
+        console.print(":robot: :lightning: Started charging")
+
+    def tell_stop_charging(self):
+        console.print(":robot: :lightning: Stopped charging")
+
 
 @dataclass(kw_only=True)
 class Blackboard:
     destinations: deque[str]
     current_location: Position
     is_charging: bool = False
-    waypoint: NamedPosition | None = None
-    tell_waypoint: Callable[[Position], None]
-    ask_position: Callable[[], Position]
-    ask_battery: Callable[[], float]
-    ask_robot_waypoint: Callable[[], Position | None]
+    desired_waypoint: NamedPosition | None = None
+    robot: Robot
+
+    def tell_robot_waypoint(self, position: Position):
+        self.robot.tell_waypoint(position)
+
+    def ask_robot_position(self) -> Position:
+        return self.robot.position
+
+    def ask_robot_battery(self) -> float:
+        return self.robot.battery
+
+    def ask_robot_waypoint(self) -> Position | None:
+        return self.robot.waypoint
+
+    def get_next_destination(self) -> str | None:
+        if len(self.destinations) == 0:
+            return None
+        return self.destinations.popleft()
+
+    def set_desired_waypoint(self, location: NamedPosition | None):
+        self.desired_waypoint = location
+
+    def get_desired_waypoint(self) -> NamedPosition | None:
+        return self.desired_waypoint
+
+    def has_desired_waypoint(self) -> bool:
+        return self.desired_waypoint is not None
+
+    def add_priority_destination(self, position: NamedPosition):
+        self.destinations.appendleft(position.name)
+
+    def tell_robot_stop_charging(self):
+        self.is_charging = False
+        self.robot.tell_stop_charging()
+
+    def tell_robot_start_charging(self):
+        self.is_charging = True
+        self.robot.tell_start_charging()
+
+
+# We scope each action to its own protocol
+class SupportsHasWaypoint(Protocol):
+    def has_desired_waypoint(self) -> bool: ...
+
+
+class SupportsGetWaypoint(Protocol):
+    def get_desired_waypoint(self) -> NamedPosition | None: ...
+
+
+class SupoprtsGetNextDestination(Protocol):
+    def get_next_destination(self) -> str | None: ...
+
+
+class SupportsSetWaypoint(Protocol):
+    def set_desired_waypoint(self, location: NamedPosition | None): ...
+
+
+class SupportsAskRobotCurrentWaypoint(Protocol):
+    def ask_robot_waypoint(self) -> Position | None: ...
+
+
+class SupportsTellRobotCurrentWaypoint(Protocol):
+    def tell_robot_waypoint(self, position: Position): ...
+
+
+class SupportsAskRobotPosition(Protocol):
+    def ask_robot_position(self) -> Position: ...
+
+
+class SupportsAskRobotBattery(Protocol):
+    def ask_robot_battery(self) -> float: ...
+
+
+class SupportsIsCharging(Protocol):
+    @property
+    def is_charging(self) -> bool: ...
+
+
+class SupportsTellRobotStartCharging(Protocol):
+    def tell_robot_start_charging(self): ...
+
+
+class SupportsTellRobotStopCharging(Protocol):
+    def tell_robot_stop_charging(self): ...
+
+
+class SupportsAddPriorityDestination(Protocol):
+    def add_priority_destination(self, position: NamedPosition): ...
+
+
+# set_next_waypoint requires the ability to query whether a waypoint is set,
+# what the next destination is, and the ability to set a waypoint
+class SupportsSetNextWaypointAction(
+    SupportsHasWaypoint,
+    SupportsSetWaypoint,
+    SupoprtsGetNextDestination,
+    Protocol,
+):
+    pass
 
 
 @btreeny.simple_action
-def set_next_waypoint(b: Blackboard):
-    if b.waypoint is not None:
+def set_next_waypoint(b: SupportsSetNextWaypointAction):
+    if b.has_desired_waypoint():
         return btreeny.SUCCESS
-    try:
-        location = b.destinations.popleft()
-    except IndexError:
+
+    location = b.get_next_destination()
+    if location is None:
         return btreeny.FAILURE
-    b.waypoint = LOCATIONS[location]
+
+    b.set_desired_waypoint(LOCATIONS[location])
+
     return btreeny.SUCCESS
 
 
+# move_to_waypoint needs to fetch both the desired waypoint and the current robot
+# state, and be able to command a new waypoint (this long chain indicates the action
+# should probably be decomposed into a series of smaller actions!)
+class SupportsMoveToWaypointAction(
+    SupportsGetWaypoint,
+    SupportsAskRobotCurrentWaypoint,
+    SupportsTellRobotCurrentWaypoint,
+    SupportsAskRobotPosition,
+    Protocol,
+):
+    pass
+
+
 @btreeny.simple_action
-def move_to_waypoint(b: Blackboard):
-    if b.waypoint is None:
+def move_to_waypoint(b: SupportsMoveToWaypointAction):
+    desired_waypoint = b.get_desired_waypoint()
+    if desired_waypoint is None:
         return btreeny.SUCCESS
+
     # Set the waypoint on the robot
     robot_waypoint = b.ask_robot_waypoint()
-    if robot_waypoint is None or robot_waypoint != b.waypoint:
-        b.tell_waypoint(b.waypoint)
-    if b.ask_position().distance_to(b.waypoint) < 0.01:
-        b.waypoint = None
+    if robot_waypoint != desired_waypoint:
+        if desired_waypoint is None:
+            return btreeny.FAILURE
+        b.tell_robot_waypoint(desired_waypoint)
+    if b.ask_robot_position().distance_to(desired_waypoint) < 0.01:
+        desired_waypoint = None
         return btreeny.SUCCESS
     return btreeny.RUNNING
 
 
+class SupportsSetHome(SupportsSetWaypoint, Protocol): ...
+
+
 @btreeny.simple_action
-def set_home(b: Blackboard):
-    b.waypoint = LOCATIONS["home"]
+def set_home(b: SupportsSetHome):
+    b.set_desired_waypoint(LOCATIONS["home"])
     return btreeny.SUCCESS
 
 
+class SupportsChargeAtHome(
+    SupportsAskRobotBattery,
+    SupportsIsCharging,
+    SupportsTellRobotStartCharging,
+    SupportsTellRobotStopCharging,
+    Protocol,
+): ...
+
+
 @btreeny.simple_action
-def charge_at_home(b: Blackboard):
-    if b.ask_battery() < 1.0:
-        b.is_charging = True
+def charge_at_home(b: SupportsChargeAtHome):
+    if b.ask_robot_battery() < 1.0:
+        if not b.is_charging:
+            b.tell_robot_start_charging()
         return btreeny.RUNNING
-    b.is_charging = False
+    b.tell_robot_stop_charging()
     return btreeny.SUCCESS
 
 
-def has_battery(b: Blackboard, threshold=0.2):
-    return b.ask_battery() > threshold
+def has_battery(b: SupportsAskRobotBattery, threshold=0.2):
+    return b.ask_robot_battery() > threshold
+
+
+class SupportsPushCurrentWaypointToStack(
+    SupportsGetWaypoint,
+    SupportsAddPriorityDestination,
+    Protocol,
+): ...
 
 
 @btreeny.simple_action
-def push_current_waypoint_to_stack(b: Blackboard):
-    if b.waypoint is None:
+def push_current_waypoint_to_stack(b: SupportsPushCurrentWaypointToStack):
+    if (desired_waypoint := b.get_desired_waypoint()) is None:
         return btreeny.SUCCESS
-    b.destinations.appendleft(b.waypoint.name)
-    b.waypoint = None
+    b.add_priority_destination(desired_waypoint)
+    return btreeny.SUCCESS
+
+
+@btreeny.simple_action
+def clear_current_waypoint(b: SupportsSetWaypoint):
+    b.set_desired_waypoint(None)
     return btreeny.SUCCESS
 
 
@@ -170,16 +315,17 @@ def ensure_all_waypoints_completed(b: Blackboard):
     return btreeny.FAILURE
 
 
-def make_navigate():
+def make_navigate() -> btreeny.TreeNode[Blackboard]:
     return btreeny.redo(
         lambda: btreeny.sequential(move_to_waypoint(), set_next_waypoint())
     )
 
 
-def make_recharge():
+def make_recharge() -> btreeny.TreeNode[Blackboard]:
     return btreeny.sequential(
         # Be sure to save the current waypoint to allow resuming of the interrupted task
         push_current_waypoint_to_stack(),
+        clear_current_waypoint(),
         set_home(),
         move_to_waypoint(),
         charge_at_home(),
@@ -208,12 +354,9 @@ def main(rerun: bool = False, rerun_url: str = "rerun+http://172.26.96.1:9876/pr
     )
 
     blackboard = Blackboard(
+        robot=robot,
         destinations=deque(("north", "east", "south", "west", "home")),
         current_location=LOCATIONS["home"],
-        tell_waypoint=robot.tell_waypoint,
-        ask_battery=lambda: robot.battery,
-        ask_position=lambda: robot.position,
-        ask_robot_waypoint=lambda: robot.waypoint,
     )
     if rerun:
         rr.init("btreeny-waypoint-navigation", spawn=False)
