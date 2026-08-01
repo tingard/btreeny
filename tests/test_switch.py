@@ -53,7 +53,7 @@ def check_false_after_count(b: CountingBlackboard, max_count: int = 1):
     ],
 )
 @bt.runner
-def test_failsafe(check, nominal, failure, expected):
+def test_switch(check, nominal, failure, expected):
     b = CountingBlackboard()
     with bt.switch(check, nominal(), failure()) as action:
         for expected_tick_result in expected:

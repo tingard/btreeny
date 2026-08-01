@@ -199,8 +199,9 @@ Map output states to different values - e.g. convert all `SUCCESS` outputs into 
 - `swap(child, from_=..., to=...)`: Reciprocally map between two states (e.g. `FAILURE` <-> `SUCCESS`)
 - `always_return(child, always_return=...)`: Discard the child's result and always return this value.
 
-### Failsafe
-Given some condition check which runs on each tick with the current blackboard, if the check ever fails move to a failure tree.
+### Switch
+Given some condition check which runs on each tick with the current blackboard, if the check ever returns `False` move from the primary mode to the secondary. Note that
+in order to move _back_ to the primary mode, a `redo` must be used.
 
 Useful when combined with `redo` to allow failsafe behaviour which can recover to continue normal operations.
 
