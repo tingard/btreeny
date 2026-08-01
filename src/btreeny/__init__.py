@@ -43,6 +43,7 @@ class BehaviourCompleteError(BTreenyRuntimeError):
     pass
 
 
+# Currently unused but with planned use
 class ReusedActionError(BTreenyRuntimeError):
     """Raised if an action context is re-entered unexpectedly."""
 
@@ -98,21 +99,18 @@ def action(
     @functools.wraps(f)
     def inner(*args: P.args, **kwargs: P.kwargs):
         # Each invocation of the action function gets a new ID
-        try:
-            with _manage_call_stack(None, self_name) as managed_node_id:
-                with f(managed_node_id, *args, **kwargs) as action:
+        with _manage_call_stack(None, self_name) as managed_node_id:
+            with f(managed_node_id, *args, **kwargs) as action:
 
-                    @functools.wraps(action)
-                    def action_func(blackboard: BlackboardType):
-                        result = action(blackboard)
-                        _tree_status = _ctx.tree_status.get() or {}
-                        _tree_status[managed_node_id] = result
-                        _ctx.tree_status.set(_tree_status)
-                        return result
+                @functools.wraps(action)
+                def action_func(blackboard: BlackboardType):
+                    result = action(blackboard)
+                    _tree_status = _ctx.tree_status.get() or {}
+                    _tree_status[managed_node_id] = result
+                    _ctx.tree_status.set(_tree_status)
+                    return result
 
-                    yield action_func
-        except AttributeError:
-            raise ReusedActionError("An action was reused unexpectedly")
+                yield action_func
 
     return inner
 
