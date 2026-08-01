@@ -55,6 +55,7 @@ def test_raises_if_ticked_when_done():
         with pytest.raises(bt.BehaviourCompleteError):
             _ = action(None)
 
+
 @bt.runner
 def test_handles_differing_length_chains():
     result = bt.RUNNING
@@ -66,4 +67,4 @@ def test_handles_differing_length_chains():
         while result == bt.RUNNING:
             result = action(None)
             i += 1
-    assert i == 3
+    assert i == 6

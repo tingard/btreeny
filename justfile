@@ -5,7 +5,7 @@ lint-check:
   uv run ruff check && uv run ruff format --check
 
 type:
-  uv run pyrefly check src
+  uv run pyrefly check src tests/typing
 
 test:
   uv run python -m pytest tests
