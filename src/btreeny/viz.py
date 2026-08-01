@@ -129,8 +129,10 @@ if __has_rerun:
         _tree_status = __ctx_tree_status.get() or {}
         keys = list(_tree_status.keys())
 
-        def _color_from_status(s: TreeStatus) -> int:
+        def _color_from_status(s: TreeStatus | None) -> int:
             match s:
+                case None:
+                    return 0x333333FF
                 case TreeStatus.SUCCESS:
                     return 0x119911FF
                 case TreeStatus.FAILURE:
@@ -145,8 +147,8 @@ if __has_rerun:
         return RerunGraph(
             nodes=rr.GraphNodes(
                 node_ids=list(map(str, keys)),
-                labels=[f"{_id_map[k]}\n{_tree_status[k]}" for k in keys],
-                colors=[_color_from_status(_tree_status[k]) for k in keys],
+                labels=[f"{_id_map[k]}\n{_tree_status.get(k, None)}" for k in keys],
+                colors=[_color_from_status(_tree_status.get(k, None)) for k in keys],
                 show_labels=True,
             ),
             edges=rr.GraphEdges(
@@ -174,7 +176,7 @@ if __has_rich:
             return Tree("root")
         assert len(root_actions) == 1, "Expected one root action"
         root = root_actions[0]
-        tree = Tree(f"{_id_map[root]} - {_tree_status[root].value}")
+        tree = Tree(f"{_id_map[root]} - {_tree_status.get(root, None)}")
         q = deque[tuple[IdType, Tree]](
             (c, tree) for c in _tree_graph.get(root, [])[::-1]
         )

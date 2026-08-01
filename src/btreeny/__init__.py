@@ -244,7 +244,7 @@ def sequential(
 def fallback(
     node_id: IdType, *children: TreeNode[BlackboardType]
 ) -> Iterator[TreeTickFunction[BlackboardType]]:
-    _check_distinct(children, "sequential")
+    _check_distinct(children, "fallback")
 
     def gen() -> Generator[TreeStatus, BlackboardType, None]:
         blackboard = yield TreeStatus.RUNNING
@@ -306,6 +306,9 @@ def repeat(
         blackboard = yield TreeStatus.RUNNING
         result = TreeStatus.SUCCESS
         for i, child_context_manager in enumerate(children):
+            # Clear any existing children tree graph for this node - this will result in child nodes overriding
+            # IDs of previous repetitions.
+            _ctx.clear_subtree(node_id)
             with child_context_manager as child_action:
                 while (result := child_action(blackboard)) == TreeStatus.RUNNING:
                     blackboard = yield TreeStatus.RUNNING
@@ -314,13 +317,14 @@ def repeat(
                     if count is not None and i >= count - 1:
                         yield result
                         return
+                    # Note that we do not immediately move to the next child, instead
+                    # returning a RUNNING and waiting for the next tick to move on.
+                    # This avoids infinite loops!
                     blackboard = yield TreeStatus.RUNNING
+                    continue
                 else:
                     yield result
-                    return
-            # Clear the child tree graph for this node - this will result in child nodes overriding
-            # IDs of previous repetitions.
-            _ctx.clear_subtree(node_id)
+                return
         yield result
         return
 
@@ -411,36 +415,42 @@ def always_return(
 
 
 @action
-def failsafe(
+def switch(
     node_id: IdType,
     check: Callable[[BlackboardType], bool],
-    nominal: TreeNode[BlackboardType],
-    failure: TreeNode[BlackboardType],
+    primary: TreeNode[BlackboardType],
+    secondary: TreeNode[BlackboardType],
 ) -> Iterator[TreeTickFunction[BlackboardType]]:
-    """Run a check on each tick, as soon as the check returns ``False`` move from a "nominal"
-    mode to an "error" mode.
+    """Run a check on each tick, as soon as the check returns ``False`` move from a "primary"
+    mode to an "secondary" mode.
+
+    If the primary mode ticks to completion (returns anything other than RUNNING) without
+    the check failing, this composite node will return its response and the tree will progress
+    without entering the secondary mode.
     """
-    _check_distinct((nominal, failure), "sequential")
+    TreeStatus.FAILURE
+    _check_distinct((primary, secondary), "failsafe")
 
     def gen() -> Generator[TreeStatus, BlackboardType, None]:
         blackboard = yield TreeStatus.RUNNING
         result = TreeStatus.SUCCESS
-        with nominal as nominal_action:
+        with primary as nominal_action:
             while check(blackboard):
                 result = nominal_action(blackboard)
                 match result:
                     case TreeStatus.RUNNING:
                         blackboard = yield result
                     case _:
+                        # Note that a FAILURE will not trigger the fail-safe!
                         blackboard = yield result
                         return
             # An interrupt has occurred - we should mark all current RUNNING child nodes as cancelled
             _ctx.cancel_running_children(node_id)
-        with failure as failure_action:
+        with secondary as failure_action:
             while (result := failure_action(blackboard)) == TreeStatus.RUNNING:
                 blackboard = yield TreeStatus.RUNNING
             yield result
-            return
+        return
 
     stepper = gen()
     next(stepper)
@@ -494,7 +504,7 @@ def parallel(
     The result type is determined by the provided `result_evaluation_function`, which defaults
     to a FAILURE if, when all actions have finished running, one or more have returned `FAILURE`.
     """
-    _check_distinct(children, "sequential")
+    _check_distinct(children, "parallel")
     with contextlib.ExitStack() as stack:
         # We need to be the "parent" of all of these functions
         tick_functions = []
@@ -552,7 +562,7 @@ def rate_limit(period_ns: int):
 __all__ = (
     "action",
     "always_return",
-    "failsafe",
+    "switch",
     "fallback",
     "IdType",
     "parallel",
