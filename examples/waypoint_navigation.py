@@ -107,21 +107,18 @@ class Robot:
 class Blackboard:
     destinations: deque[str]
     current_location: Position
-    is_charging: bool = False
     desired_waypoint: NamedPosition | None = None
     robot: Robot
 
-    def tell_robot_waypoint(self, position: Position):
-        self.robot.tell_waypoint(position)
-
-    def ask_robot_position(self) -> Position:
-        return self.robot.position
-
-    def ask_robot_battery(self) -> float:
-        return self.robot.battery
-
-    def ask_robot_waypoint(self) -> Position | None:
-        return self.robot.waypoint
+    # Methods grouped into blackboard interaction and robot direct interaction
+    # rule of thumb _should_ be that general blackboard stuff should be
+    # focused on inter-node comms (e.g. the backlog of locations to visit),
+    # and the ask/tell robot stuff should be specific to a node.
+    #
+    # Not sure how well I've achieved that here... It may be better to have a
+    # dedicated "telemetry reading" section of the tree (i.e. using a parrallel
+    # node), and then have telemetry as a read-only properties which actions can
+    # access.
 
     def get_next_destination(self) -> str | None:
         if len(self.destinations) == 0:
@@ -140,12 +137,22 @@ class Blackboard:
     def add_priority_destination(self, position: NamedPosition):
         self.destinations.appendleft(position.name)
 
+    def ask_robot_position(self) -> Position:
+        return self.robot.position
+
+    def ask_robot_battery(self) -> float:
+        return self.robot.battery
+
+    def ask_robot_waypoint(self) -> Position | None:
+        return self.robot.waypoint
+
+    def tell_robot_waypoint(self, position: Position):
+        self.robot.tell_waypoint(position)
+
     def tell_robot_stop_charging(self):
-        self.is_charging = False
         self.robot.tell_stop_charging()
 
     def tell_robot_start_charging(self):
-        self.is_charging = True
         self.robot.tell_start_charging()
 
     def ask_count_remaining_destinations(self):
@@ -193,7 +200,7 @@ def move_to_waypoint(b: SupportsMoveToWaypointAction):
     robot_waypoint = b.ask_robot_waypoint()
     if robot_waypoint != desired_waypoint:
         b.tell_robot_waypoint(desired_waypoint)
-    # TODO: Waiting for navigation should be a new node!
+    # TODO: Waiting for navigation should be a new action!
     if b.ask_robot_position().distance_to(desired_waypoint) < 0.01:
         return btreeny.SUCCESS
     return btreeny.RUNNING
