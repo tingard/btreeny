@@ -10,6 +10,7 @@ def test_a_b():
             if b % 2 == 1:
                 return bt.FAILURE
             return bt.RUNNING
+
         yield _inner
 
     @bt.action
@@ -18,6 +19,7 @@ def test_a_b():
             if b % 2 == 0:
                 return bt.FAILURE
             return bt.RUNNING
+
         yield _inner
 
     def value_fn(k: bool):
