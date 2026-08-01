@@ -87,7 +87,7 @@ def _manage_call_stack(
 
 def action(
     func: Callable[
-        Concatenate[IdType, P], Generator[TreeTickFunction[BlackboardType], None, None]
+        Concatenate[IdType, P], Iterator[TreeTickFunction[BlackboardType]]
     ],
     name: str | None = None,
 ) -> Callable[P, TreeNode[BlackboardType]]:
