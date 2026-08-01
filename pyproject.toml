@@ -1,7 +1,7 @@
 [project]
 name = "btreeny"
 dynamic = ["version"]
-description = "Add your description here"
+description = "A small but mighty Behavior Tree library."
 readme = "README.md"
 authors = [
     { name = "Tim Lingard", email = "tklingard@gmail.com" }
