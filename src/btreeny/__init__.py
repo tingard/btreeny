@@ -45,9 +45,7 @@ class BehaviourCompleteError(BTreenyRuntimeError):
 
 # Currently unused but with planned use
 class ReusedActionError(BTreenyRuntimeError):
-    """Raised if an action context is re-entered unexpectedly."""
-
-    pass
+    """Raised when a node instance is entered more than once."""
 
 
 @contextlib.contextmanager
@@ -85,17 +83,56 @@ def _manage_call_stack(
         _ctx.call_stack.set(parent)
 
 
+class _SingleUseNode:
+    """Wraps a node context manager so re-entry gives a useful error."""
+
+    __slots__ = ("_cm", "_name", "_used")
+
+    def __init__(self, cm: contextlib.AbstractContextManager, name: str):
+        self._cm = cm
+        self._name = name
+        self._used = False
+
+    def __repr__(self) -> str:
+        return f"<btreeny node {self._name!r}>"
+
+    def __enter__(self):
+        if self._used:
+            raise ReusedActionError(
+                f"Node {self._name!r} has already been used. Every node in a "
+                f"tree must be its own instance. To run one more than once, "
+                f"pass a factory that builds a fresh node - "
+                f"`lambda: {self._name}()` rather than `{self._name}()`."
+            )
+        self._used = True
+        return self._cm.__enter__()
+
+    def __exit__(self, *exc_info):
+        return self._cm.__exit__(*exc_info)
+
+
+def _check_distinct(nodes: tuple[object, ...], parent: str) -> None:
+    """Fail at construction if one instance was passed twice to a composite."""
+    seen: dict[int, int] = {}
+    for i, node in enumerate(nodes):
+        if (first := seen.get(id(node))) is not None:
+            name = getattr(node, "_name", None) or type(node).__name__
+            raise ReusedActionError(
+                f"{parent} was given the same node instance ({name!r}) as both "
+                f"child {first} and child {i}. Every node must be its own "
+                f"instance - call the action twice rather than reusing a value."
+            )
+        seen[id(node)] = i
+
+
 def action(
-    func: Callable[
-        Concatenate[IdType, P], Iterator[TreeTickFunction[BlackboardType]]
-    ],
+    func: Callable[Concatenate[IdType, P], Iterator[TreeTickFunction[BlackboardType]]],
     name: str | None = None,
 ) -> Callable[P, TreeNode[BlackboardType]]:
     self_name = name if name is not None else get_name(func)
 
     f = contextlib.contextmanager(func)
 
-    @contextlib.contextmanager
     @functools.wraps(f)
     def inner(*args: P.args, **kwargs: P.kwargs):
         # Each invocation of the action function gets a new ID
@@ -112,7 +149,13 @@ def action(
 
                 yield action_func
 
-    return inner
+    _make = contextlib.contextmanager(inner)
+
+    @functools.wraps(inner)
+    def make(*args: P.args, **kwargs: P.kwargs) -> TreeNode[BlackboardType]:
+        return _SingleUseNode(_make(*args, **kwargs), self_name)
+
+    return make
 
 
 def simple_action(
@@ -166,6 +209,8 @@ def _with_stack_reset(f: TreeNode[BlackboardType]):
 def sequential(
     node_id: IdType, *children: TreeNode[BlackboardType]
 ) -> Iterator[TreeTickFunction[BlackboardType]]:
+    _check_distinct(children, "sequential")
+
     def gen() -> Generator[TreeStatus, BlackboardType, None]:
         blackboard = yield TreeStatus.RUNNING
         for child_context_manager in children:
@@ -199,6 +244,8 @@ def sequential(
 def fallback(
     node_id: IdType, *children: TreeNode[BlackboardType]
 ) -> Iterator[TreeTickFunction[BlackboardType]]:
+    _check_distinct(children, "sequential")
+
     def gen() -> Generator[TreeStatus, BlackboardType, None]:
         blackboard = yield TreeStatus.RUNNING
         for child_context_manager in children:
@@ -373,6 +420,7 @@ def failsafe(
     """Run a check on each tick, as soon as the check returns ``False`` move from a "nominal"
     mode to an "error" mode.
     """
+    _check_distinct((nominal, failure), "sequential")
 
     def gen() -> Generator[TreeStatus, BlackboardType, None]:
         blackboard = yield TreeStatus.RUNNING
@@ -446,7 +494,7 @@ def parallel(
     The result type is determined by the provided `result_evaluation_function`, which defaults
     to a FAILURE if, when all actions have finished running, one or more have returned `FAILURE`.
     """
-
+    _check_distinct(children, "sequential")
     with contextlib.ExitStack() as stack:
         # We need to be the "parent" of all of these functions
         tick_functions = []

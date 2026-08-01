@@ -27,7 +27,6 @@ def test_repeat(child, continue_if, expected):
             assert result == expected_tick_result
 
 
-@pytest.mark.xfail
 @bt.runner
 def test_raises_on_reused_action():
     action = sa.run_then_ok()

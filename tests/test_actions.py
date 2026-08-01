@@ -3,7 +3,6 @@ import btreeny as bt
 import tests.standard_actions as sa
 
 
-@pytest.mark.xfail
 @bt.runner
 def test_raises_if_action():
     action = sa.run_then_ok()

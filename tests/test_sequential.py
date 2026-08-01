@@ -48,8 +48,6 @@ def test_raises_if_action_reused():
     # This is not allowed! The tree will tick the state machine
     # of the first action to completion, and then try the second
     # action
-    with bt.sequential(action, action) as action:
-        action(None)
-        action(None)
-        with pytest.raises(bt.BehaviourCompleteError):
-            action(None)
+    with pytest.raises(bt.ReusedActionError):
+        with bt.sequential(action, action) as action:
+            pass
