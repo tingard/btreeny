@@ -242,7 +242,3 @@ graph = btreeny.viz.rerun_tree_graph()
 # Log to Rerun
 rr.log("tree", graph.nodes, graph.edges)
 ```
-
-## BTreeny vs PyTrees
-
-It's the battle of the century
