@@ -215,6 +215,16 @@ Another useful control node - this allows running multiple actions on each tick,
 
 The return value of a tick is determined by a callable `result_evaluation_function` you can provide as a keyword argument, with a fairly conservative default (`any_running_is_running_allow_max_failures_failures`: `RUNNING` if any child is running, `FAILURE` if more than `max_failures` children failed, otherwise `SUCCESS`).
 
+### Keyed
+
+The most general, and most easy to mis-use action that BTreeny provides.
+
+This action asks you on every tick to create an "action keys" from the current blackboard. Whenever the action key changes, the current sub-tree is torn down and a new sub-tree is created using the `value_fn` function. This is as close to the dark side of the force as you get with behaviour trees, in my opinion. Super powerful for dynamic tree creation and there are some kinds of reactive behaviour you can only (cleanly) achieve using it - for example using Utility AI to dynamically switch priorities (it's very possible with redo and fallbacks, but `keyed` is cleaner).
+
+Action lifecycle hooks are run, so some measure of cleanup is possible, but we do not wait for an action to stop RUNNING before switching. It's entirely possible to build yourself into some kind of corrupted state - be warned!
+
+TL;DR - you should probably explore other tree compositions before reaching for this!
+
 ## Logging and Visualization
 
 Understanding what's going on in your behaviour tree is crucial for debugging and triaging issues - `btreeny` has an (opinionated) set of logging utilities, but lets you access the underlying data to write your own.

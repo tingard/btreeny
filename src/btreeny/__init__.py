@@ -414,6 +414,77 @@ def always_return(
         yield inner
 
 
+KeyType = TypeVar("KeyType")
+
+
+@action
+def keyed(
+    node_id: IdType,
+    key_fn: Callable[[BlackboardType], KeyType],
+    value_fn: Callable[[KeyType], TreeNode[BlackboardType]],
+) -> Iterator[TreeTickFunction[BlackboardType]]:
+    """The most general, and most easy to mis-use action that BTreeny provides.
+
+    This action allows you to dynamically create and return "action keys" from a
+    blackboard. Whenever the action key changes, the current sub-tree is torn down
+    and a new sub-tree is created using the `value_fn` function.
+
+    Action lifecycle hooks are run, so some measure of cleanup is possible, but we
+    do not wait for an action to stop RUNNING before switching. It's entirely
+    possible to build yourself into some kind of corrupted state - be warned!
+
+    TL;DR - you should probably explore other tree compositions before reaching for
+    this!
+    """
+    with contextlib.ExitStack() as stack:
+        last_key_set: bool = False
+        last_key: KeyType | None = None
+        tick: Callable[[BlackboardType], TreeStatus] | None = None
+        key_id_map: dict[KeyType, int] = {}
+
+        def _inner(blackboard: BlackboardType):
+            nonlocal tick, last_key_set, last_key, key_id_map
+            key = key_fn(blackboard)
+            if (not last_key_set) or key != last_key:
+                last_key_set = True
+                last_key = key
+                # Exit the current action
+                stack.close()
+                # Mark all children as cancelled
+                _ctx.cancel_running_children(node_id)
+                current_tree_graph = _ctx.tree_graph.get()
+                assert current_tree_graph is not None
+                keyed_children = current_tree_graph.get(node_id, [])
+
+                if (prev_index := key_id_map.get(key, None)) is not None:
+                    # If we have previously seen this key - reuse the child
+                    # index it was in. This reduces the possibility of
+                    # unbounded memory growth.
+                    # Achieve this by temporarily popping any children to the right
+                    # of this key
+                    current_tree_graph[node_id] = keyed_children[:prev_index]
+                    _ctx.tree_graph.set(current_tree_graph)
+                    to_append = keyed_children[prev_index + 1 :]
+                else:
+                    key_id_map[key] = len(keyed_children)
+                    to_append = []
+
+                # Set up the new action
+                action = value_fn(key)
+                tick = stack.enter_context(action)
+                key_action_id = _ctx.call_stack.get()
+                assert key_action_id is not None
+                _ctx.clear_subtree(key_action_id)
+                if len(to_append):
+                    current_tree_graph = _ctx.tree_graph.get()
+                    assert current_tree_graph is not None
+                    current_tree_graph[node_id].extend(to_append)
+            assert tick is not None
+            return tick(blackboard)
+
+        yield _inner
+
+
 @action
 def switch(
     node_id: IdType,
