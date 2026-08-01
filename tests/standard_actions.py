@@ -28,7 +28,11 @@ def never_runs(b: Any):
 @bt.action
 def run_then(node_id: IdType, result: bt.TreeStatus = bt.SUCCESS, count: int = 1):
     c = itertools.chain([bt.RUNNING] * count, itertools.repeat(result))
-    yield lambda b: next(c)
+
+    def _inner(b: None) -> bt.TreeStatus:
+        return next(c)
+
+    yield _inner
 
 
 run_then_ok = functools.partial(run_then, result=bt.SUCCESS)

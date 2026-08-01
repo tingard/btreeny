@@ -59,7 +59,7 @@ def print_trace(print_func: Callable[[str], None] = print):
 @dataclass
 class TreeStatusGraph:
     node: str
-    status: TreeStatus
+    status: TreeStatus | None
     children: "list[TreeStatusGraph]"
 
     def pprint(self):
@@ -93,7 +93,7 @@ def get_tree_status() -> "TreeStatusGraph":
     node_map: dict[IdType, TreeStatusGraph] = {}
     node_map[root_action] = TreeStatusGraph(
         node=curr_id_map[root_action],
-        status=curr_tree_status[root_action],
+        status=curr_tree_status.get(root_action, None),
         children=[],
     )
     q = deque[IdType]([])
@@ -106,7 +106,7 @@ def get_tree_status() -> "TreeStatusGraph":
             continue
         for child in children:
             child_name = curr_id_map[child]
-            child_status = curr_tree_status[child]
+            child_status = curr_tree_status.get(child, None)
             node_map[child] = TreeStatusGraph(
                 node=child_name, status=child_status, children=[]
             )
@@ -174,9 +174,10 @@ if __has_rich:
             return Tree("root")
         assert len(root_actions) == 1, "Expected one root action"
         root = root_actions[0]
-        q = deque[tuple[IdType, Tree]]()
         tree = Tree(f"{_id_map[root]} - {_tree_status[root].value}")
-        q.append((root, tree))
+        q = deque[tuple[IdType, Tree]](
+            (c, tree) for c in _tree_graph.get(root, [])[::-1]
+        )
         while len(q) > 0:
             action_id, parent_tree = q.popleft()
             action_name = _id_map[action_id]
