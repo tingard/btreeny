@@ -6,7 +6,7 @@ readme = "README.md"
 authors = [
     { name = "Tim Lingard", email = "tklingard@gmail.com" }
 ]
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 dependencies = []
 
 [build-system]
@@ -16,7 +16,7 @@ build-backend = "hatchling.build"
 [dependency-groups]
 dev = [
     "hatch>=1.14.1,<1.15.0",
-    "pyrefly>=0.24.2",
+    "pyrefly>=1.2.0",
     "pytest>=8.4.1",
     "rerun-sdk>=0.24.0",
     "rich>=14.0.0",
@@ -34,3 +34,6 @@ source = "vcs"
 
 [tool.hatch.version.raw-options]
 version_scheme = "no-guess-dev"
+
+[tool.pyrefly.errors]
+unused-ignore = true

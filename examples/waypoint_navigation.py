@@ -70,7 +70,7 @@ def move_with_speed(a: Position, b: Position, speed: float, time: float) -> Posi
 
 @dataclass
 class Robot:
-    position: Position = LOCATIONS["home"]
+    position: Position = field(default_factory=lambda: LOCATIONS["home"])
     battery: float = 1.0
     discharge_rate: float = 0.02
     charge_rate: float = 0.2
@@ -163,29 +163,48 @@ def push_current_waypoint_to_stack(b: Blackboard):
     return btreeny.SUCCESS
 
 
+@btreeny.simple_action
+def ensure_all_waypoints_completed(b: Blackboard):
+    if len(b.destinations) == 0:
+        return btreeny.SUCCESS
+    return btreeny.FAILURE
+
+
+def make_navigate():
+    return btreeny.redo(
+        lambda: btreeny.sequential(move_to_waypoint(), set_next_waypoint())
+    )
+
+
+def make_recharge():
+    return btreeny.sequential(
+        # Be sure to save the current waypoint to allow resuming of the interrupted task
+        push_current_waypoint_to_stack(),
+        set_home(),
+        move_to_waypoint(),
+        charge_at_home(),
+    )
+
+
 def main(rerun: bool = False, rerun_url: str = "rerun+http://172.26.96.1:9876/proxy"):
     robot = Robot(speed=0.2, discharge_rate=0.05)
 
-    root = btreeny.redo(
+    loop = btreeny.redo(
         # Using a failsafe means that when we are low on battery we will enter a failsafe mode where
         # we move to our charger. When(/if) the failsafe behvior returns, the action finishes.
         # By wrapping this failsafe in a repeat, we will allow the robot to continue to the next
         # waypoint
         lambda: btreeny.failsafe(
             has_battery,
-            btreeny.fallback(
-                btreeny.redo(
-                    lambda: btreeny.sequential(move_to_waypoint(), set_next_waypoint())
-                ),
-            ),
-            btreeny.sequential(
-                # Be sure to save the current waypoint to allow resuming of the interrupted task
-                push_current_waypoint_to_stack(),
-                set_home(),
-                move_to_waypoint(),
-                charge_at_home(),
-            ),
+            # These have to be functions as the action must be rebuilt
+            make_navigate(),
+            make_recharge(),
         )
+    )
+
+    root = btreeny.fallback(
+        loop,
+        ensure_all_waypoints_completed(),
     )
 
     blackboard = Blackboard(
@@ -209,7 +228,7 @@ def main(rerun: bool = False, rerun_url: str = "rerun+http://172.26.96.1:9876/pr
             static=True,
         )
 
-    with Live(console=console) as live:
+    with Live(auto_refresh=False, console=console) as live:
         with root as tree:
             while True:
                 robot.sense()
@@ -228,7 +247,7 @@ def main(rerun: bool = False, rerun_url: str = "rerun+http://172.26.96.1:9876/pr
                 columns = Columns(
                     [btreeny.viz.get_rich_tree()], equal=True, expand=True
                 )
-                live.update(columns)
+                live.update(columns, refresh=True)
                 if result != btreeny.RUNNING:
                     break
                 time.sleep(0.1)

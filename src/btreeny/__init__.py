@@ -33,8 +33,19 @@ P = ParamSpec("P")
 T = TypeVar("T")
 
 
-class BehaviourCompleteError(RuntimeError):
+class BTreenyRuntimeError(RuntimeError):
     pass
+
+
+class BehaviourCompleteError(BTreenyRuntimeError):
+    """Raised if an action is `tick`-ed after having run to completion."""
+
+    pass
+
+
+# Currently unused but with planned use
+class ReusedActionError(BTreenyRuntimeError):
+    """Raised when a node instance is entered more than once."""
 
 
 @contextlib.contextmanager
@@ -63,8 +74,55 @@ def _manage_call_stack(
     # Add this to the node graph
     parents_children.append(node_id)
     _ctx.tree_graph.set(_tree_graph)
-    yield node_id
-    _ctx.call_stack.set(parent)
+    try:
+        yield node_id
+    finally:
+        # Finally ensures that even if an issue occurs
+        # during action setup the next action is not
+        # then nested under the erroring action
+        _ctx.call_stack.set(parent)
+
+
+class _SingleUseNode:
+    """Wraps a node context manager so re-entry gives a useful error."""
+
+    __slots__ = ("_cm", "_name", "_used")
+
+    def __init__(self, cm: contextlib.AbstractContextManager, name: str):
+        self._cm = cm
+        self._name = name
+        self._used = False
+
+    def __repr__(self) -> str:
+        return f"<btreeny node {self._name!r}>"
+
+    def __enter__(self):
+        if self._used:
+            raise ReusedActionError(
+                f"Node {self._name!r} has already been used. Every node in a "
+                f"tree must be its own instance. To run one more than once, "
+                f"pass a factory that builds a fresh node - "
+                f"`lambda: {self._name}()` rather than `{self._name}()`."
+            )
+        self._used = True
+        return self._cm.__enter__()
+
+    def __exit__(self, *exc_info):
+        return self._cm.__exit__(*exc_info)
+
+
+def _check_distinct(nodes: tuple[object, ...], parent: str) -> None:
+    """Fail at construction if one instance was passed twice to a composite."""
+    seen: dict[int, int] = {}
+    for i, node in enumerate(nodes):
+        if (first := seen.get(id(node))) is not None:
+            name = getattr(node, "_name", None) or type(node).__name__
+            raise ReusedActionError(
+                f"{parent} was given the same node instance ({name!r}) as both "
+                f"child {first} and child {i}. Every node must be its own "
+                f"instance - call the action twice rather than reusing a value."
+            )
+        seen[id(node)] = i
 
 
 def action(
@@ -75,7 +133,6 @@ def action(
 
     f = contextlib.contextmanager(func)
 
-    @contextlib.contextmanager
     @functools.wraps(f)
     def inner(*args: P.args, **kwargs: P.kwargs):
         # Each invocation of the action function gets a new ID
@@ -92,13 +149,21 @@ def action(
 
                 yield action_func
 
-    return inner
+    _make = contextlib.contextmanager(inner)
+
+    @functools.wraps(inner)
+    def make(*args: P.args, **kwargs: P.kwargs) -> TreeNode[BlackboardType]:
+        return _SingleUseNode(_make(*args, **kwargs), self_name)
+
+    return make
 
 
-def simple_action(f: TreeTickFunction[BlackboardType]):
+def simple_action(
+    f: TreeTickFunction[BlackboardType],
+) -> Callable[[], TreeNode[BlackboardType]]:
     @action
     @functools.wraps(f)
-    def _inner(*a, **k):
+    def _inner(node_id: IdType):
         yield f
 
     return _inner
@@ -141,15 +206,16 @@ def _with_stack_reset(f: TreeNode[BlackboardType]):
 
 
 @action
-def sequential(node_id: IdType, *children: TreeNode[BlackboardType]):
+def sequential(
+    node_id: IdType, *children: TreeNode[BlackboardType]
+) -> Iterator[TreeTickFunction[BlackboardType]]:
+    _check_distinct(children, "sequential")
+
     def gen() -> Generator[TreeStatus, BlackboardType, None]:
         blackboard = yield TreeStatus.RUNNING
         for child_context_manager in children:
             with child_context_manager as child_action:
-                # TODO: Pyrefly is not happy with blackboard typing - why?
-                while (
-                    result := child_action(blackboard)  # pyrefly: ignore
-                ) == TreeStatus.RUNNING:
+                while (result := child_action(blackboard)) == TreeStatus.RUNNING:
                     blackboard = yield TreeStatus.RUNNING
                 if result == TreeStatus.FAILURE:
                     yield result
@@ -175,15 +241,16 @@ def sequential(node_id: IdType, *children: TreeNode[BlackboardType]):
 
 
 @action
-def fallback(node_id: IdType, *children: TreeNode[BlackboardType]):
+def fallback(
+    node_id: IdType, *children: TreeNode[BlackboardType]
+) -> Iterator[TreeTickFunction[BlackboardType]]:
+    _check_distinct(children, "sequential")
+
     def gen() -> Generator[TreeStatus, BlackboardType, None]:
         blackboard = yield TreeStatus.RUNNING
         for child_context_manager in children:
             with child_context_manager as child_action:
-                # TODO: Pyrefly is not happy with blackboard typing - why?
-                while (
-                    result := child_action(blackboard)  # pyrefly: ignore
-                ) == TreeStatus.RUNNING:
+                while (result := child_action(blackboard)) == TreeStatus.RUNNING:
                     blackboard = yield TreeStatus.RUNNING
                 if result == TreeStatus.SUCCESS:
                     yield result
@@ -214,7 +281,7 @@ def repeat(
     action_factory: Callable[[], TreeNode[BlackboardType]],
     continue_if: Literal[TreeStatus.SUCCESS, TreeStatus.FAILURE],
     count: int | None = None,
-):
+) -> Iterator[TreeTickFunction[BlackboardType]]:
     """Repeat an action while it returns a specific value (success or failure).
 
     Parameters
@@ -274,8 +341,28 @@ def repeat(
         stepper.close()
 
 
-retry = functools.partial(repeat, continue_if=TreeStatus.FAILURE)
-redo = functools.partial(repeat, continue_if=TreeStatus.SUCCESS)
+def retry(
+    action_factory: Callable[[], TreeNode[BlackboardType]],
+    count: int | None = None,
+) -> TreeNode[BlackboardType]:
+    """Retry an action, as generated by `action_factory`, up to `count` times
+    if it returns a `FAILURE`.
+
+    If `count` is `None`, continue indefinitely.
+    """
+    return repeat(action_factory, continue_if=TreeStatus.FAILURE, count=count)
+
+
+def redo(
+    action_factory: Callable[[], TreeNode[BlackboardType]],
+    count: int | None = None,
+) -> TreeNode[BlackboardType]:
+    """Redo an action, as generated by `action_factory`, up to `count` times
+    if it returns a `SUCCESS`.
+
+    If `count` is `None`, continue indefinitely.
+    """
+    return repeat(action_factory, continue_if=TreeStatus.SUCCESS, count=count)
 
 
 @action
@@ -283,7 +370,7 @@ def remap(
     node_id: IdType,
     child: TreeNode[BlackboardType],
     mapping: dict[TreeStatus, TreeStatus],
-):
+) -> Iterator[TreeTickFunction[BlackboardType]]:
     with child as action:
 
         def inner(blackboard: BlackboardType) -> TreeStatus:
@@ -300,7 +387,7 @@ def swap(
     *,
     from_: TreeStatus,
     to: TreeStatus,
-):
+) -> Iterator[TreeTickFunction[BlackboardType]]:
     if from_ == to:
         raise ValueError(f"Cannot swap {from_} with itself")
     with remap(child, {from_: to, to: from_}) as action:
@@ -313,7 +400,7 @@ def always_return(
     child: TreeNode[BlackboardType],
     *,
     always_return: TreeStatus,
-):
+) -> Iterator[TreeTickFunction[BlackboardType]]:
     with child as action:
 
         def inner(blackboard: BlackboardType) -> TreeStatus:
@@ -329,13 +416,13 @@ def failsafe(
     check: Callable[[BlackboardType], bool],
     nominal: TreeNode[BlackboardType],
     failure: TreeNode[BlackboardType],
-):
+) -> Iterator[TreeTickFunction[BlackboardType]]:
     """Run a check on each tick, as soon as the check returns ``False`` move from a "nominal"
     mode to an "error" mode.
     """
+    _check_distinct((nominal, failure), "sequential")
 
     def gen() -> Generator[TreeStatus, BlackboardType, None]:
-        nonlocal nominal
         blackboard = yield TreeStatus.RUNNING
         result = TreeStatus.SUCCESS
         with nominal as nominal_action:
@@ -347,21 +434,13 @@ def failsafe(
                     case _:
                         blackboard = yield result
                         return
-            # An interrupt has occurred - we should mark these nodes as cancelled
-            running_node = _ctx.call_stack.get()
-            if running_node is not None:
-                _tree_status = _ctx.tree_status.get() or {}
-                _tree_status[running_node] = TreeStatus.CANCELLED
-                _ctx.tree_status.set(_tree_status)
+            # An interrupt has occurred - we should mark all current RUNNING child nodes as cancelled
+            _ctx.cancel_running_children(node_id)
         with failure as failure_action:
-            while (
-                result := failure_action(blackboard)  # pyrefly: ignore
-            ) == TreeStatus.RUNNING:
+            while (result := failure_action(blackboard)) == TreeStatus.RUNNING:
                 blackboard = yield TreeStatus.RUNNING
             yield result
             return
-        yield TreeStatus.SUCCESS
-        return
 
     stepper = gen()
     next(stepper)
@@ -409,13 +488,13 @@ def parallel(
     result_evaluation_function: Callable[
         [list[TreeStatus]], TreeStatus
     ] = any_running_is_running_allow_max_failures_failures,
-):
+) -> Iterator[TreeTickFunction[BlackboardType]]:
     """Evaluate multiple nodes in parallel.
 
     The result type is determined by the provided `result_evaluation_function`, which defaults
     to a FAILURE if, when all actions have finished running, one or more have returned `FAILURE`.
     """
-
+    _check_distinct(children, "sequential")
     with contextlib.ExitStack() as stack:
         # We need to be the "parent" of all of these functions
         tick_functions = []
@@ -425,26 +504,38 @@ def parallel(
             _ctx.call_stack.set(this_stack)
             # use the _with_stack_reset wrapper to make sure this child manages its call stack properly
             tick_functions.append(stack.enter_context(_with_stack_reset(child)))
+        latched: list[TreeStatus | None] = [None for _ in range(len(tick_functions))]
         is_done = False
 
         def _inner(blackboard: BlackboardType):
             nonlocal is_done
             if is_done:
                 raise BehaviourCompleteError("Ticked a finished behaviour.")
-            results = [func(blackboard) for func in tick_functions]
+            results: list[TreeStatus] = []
+            for i, func in enumerate(tick_functions):
+                if (prev := latched[i]) is not None:
+                    results.append(prev)
+                    continue
+                r = func(blackboard)
+                if r != TreeStatus.RUNNING:
+                    latched[i] = r
+                results.append(r)
             result = result_evaluation_function(results)
-            is_done = result != RUNNING
+            is_done = result != TreeStatus.RUNNING
             return result
 
         yield _inner
 
 
-def runner(f: Callable[P, T]) -> Callable[[], T]:
+def runner(f: Callable[P, T]) -> Callable[P, T]:
     @functools.wraps(f)
-    def _inner(*a, **k):
+    def _inner(*a: P.args, **k: P.kwargs) -> T:
+        def reset_then_run() -> T:
+            _ctx.reset()
+            return f(*a, **k)
+
         ctx = contextvars.copy_context()
-        _ctx.reset()
-        return ctx.run(functools.partial(f, *a, **k))
+        return ctx.run(reset_then_run)
 
     return _inner
 

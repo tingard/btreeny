@@ -25,3 +25,15 @@ def test_repeat(child, continue_if, expected):
         for expected_tick_result in expected:
             result = action(None)
             assert result == expected_tick_result
+
+
+@bt.runner
+def test_raises_on_reused_action():
+    action = sa.run_then_ok()
+
+    tree = bt.redo(lambda: action)
+    with tree as tick:
+        tick(None)
+        tick(None)
+        with pytest.raises(bt.ReusedActionError):
+            tick(None)

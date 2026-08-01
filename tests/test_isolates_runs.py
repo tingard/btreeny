@@ -1,12 +1,12 @@
 import btreeny as bt
 
-from standard_actions import run_then_ok
+import tests.standard_actions as sa
 
 
 def test_isolates_runs():
     @bt.runner
     def episode():
-        with bt.redo(lambda: bt.sequential(run_then_ok()), count=None) as tick:
+        with bt.redo(lambda: bt.sequential(sa.run_then_ok()), count=None) as tick:
             for _ in range(20):
                 tick({})
         return len(bt._ctx.id_map.get() or {})
@@ -14,3 +14,17 @@ def test_isolates_runs():
     for i in range(4):
         n_nodes = episode()
         assert n_nodes == 3
+
+
+def test_isolates_runs_dirty_context():
+    @bt.runner
+    def episode():
+        with bt.redo(lambda: bt.sequential(sa.run_then_ok()), count=None) as tick:
+            for _ in range(20):
+                tick({})
+        return len(bt._ctx.id_map.get() or {})
+
+    with sa.run_then_fail() as tick:
+        tick(None)
+    n_nodes = episode()
+    assert n_nodes == 3

@@ -51,6 +51,23 @@ def clear_subtree(node_id: IdType):
     id_map.set(curr_id_map)
 
 
+def cancel_running_children(node_id: IdType):
+    to_search = deque((node_id,))
+    curr_tree_graph = tree_graph.get() or {}
+    curr_status = tree_status.get() or {}
+    # BFS down the tree from this node
+    while len(to_search) > 0:
+        p = to_search.pop()
+        c_of_p = curr_tree_graph.get(p, None)
+        if c_of_p is None:
+            continue
+        to_search.extend(c_of_p)
+        for child in c_of_p:
+            if curr_status.get(child, None) == TreeStatus.RUNNING:
+                curr_status[child] = TreeStatus.CANCELLED
+    tree_status.set(curr_status)
+
+
 def update_name(node_id: IdType, new_name: str):
     if (curr_id_map := id_map.get()) is not None:
         curr_id_map[node_id] = new_name

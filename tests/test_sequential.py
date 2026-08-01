@@ -40,3 +40,14 @@ def test_raises_if_ticked_when_done():
         assert result == bt.SUCCESS
         with pytest.raises(bt.BehaviourCompleteError):
             _ = action(None)
+
+
+@bt.runner
+def test_raises_if_action_reused():
+    action = sa.run_then_fail()
+    # This is not allowed! The tree will tick the state machine
+    # of the first action to completion, and then try the second
+    # action
+    with pytest.raises(bt.ReusedActionError):
+        with bt.sequential(action, action) as action:
+            pass
